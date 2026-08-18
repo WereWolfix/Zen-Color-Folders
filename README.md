@@ -14,25 +14,46 @@ outline thickness control.
   right-clicked (`popup.triggerNode.closest("zen-folder")`), and injects a
   "Change Color…" menu item if one isn't already there.
 - Clicking it opens a panel with:
-  - a **Fill Color** wheel — tints only the folder *icon's* fill, not the
-    label bar background
-  - an **Outline Color** wheel — tints the folder icon's outline
-  - a **Text Color** wheel — tints the folder's label text, independently
-    of the fill color
+  - a **Fill Color** wheel — recolors the folder icon's fill
+  - an **Outline Color** wheel — recolors the folder icon's outline
+  - a **Text Color** wheel — recolors the folder's label text,
+    independently of the fill color
   - each of the three has its own "Enable ___" checkbox
   - an **Outline Thickness** control: a slider (0–8, in 0.1 steps) paired
     with a number field you can type an exact value into directly
     (including values above 8, and down to 0)
 
+### Fill goes through Zen's own variable, not a flat override
+
+Zen already gives every folder icon a background derived from a formula
+roughly like:
+
+```css
+--zen-folder-behind-bgcolor: light-dark(
+  color-mix(in srgb, var(--zen-primary-color) 60%, gray),
+  color-mix(in srgb, var(--zen-primary-color) 60%, #c1c1c1)
+);
+```
+
+i.e. it blends a base `--zen-primary-color` with gray (dark mode) or light
+gray (light mode) to get the actual rendered icon color. An earlier version
+of this mod set its own `fill: ...` directly, which bypassed that formula
+and gave a flat, un-blended color. This version instead sets
+**`--zen-primary-color`** itself and lets Zen's own CSS compute the final
+blended color — so a custom color from the wheel gets the same light/dark
+adaptive treatment as Zen's built-in preset colors, not a flat override.
+
 ### First time you open a folder's picker
 
 If a folder has never been customized with this mod, all three wheels open
 **enabled by default**, pre-filled with whatever Zen is *already* rendering
-for that folder — its native default icon fill, outline, and text color —
-by reading the actual computed styles off the folder's icon/label at the
-moment you open the picker. So the picker starts by matching what you
-currently see, and you're just nudging it from there, rather than starting
-from some arbitrary placeholder color.
+for that folder:
+- Fill starts from the folder's current computed `--zen-primary-color`.
+- Outline starts from the icon's current computed stroke color.
+- Text starts from the label's current computed text color.
+
+So the picker starts by matching what you currently see, and you're
+nudging it from there rather than starting from an arbitrary placeholder.
 
 Once you've applied a custom value for a folder, reopening the picker later
 respects exactly what you saved, including any wheel you deliberately
@@ -42,10 +63,10 @@ switched off.
   `extensions.zenfoldercolor.colors` as
   `{ "<folder id>": { "fill": "#rrggbb"|null, "outline": "#rrggbb"|null, "text": "#rrggbb"|null, "width": n } }`,
   and applied as CSS custom properties directly on the folder element:
-  - `--zen-folder-color` — our own variable, used by the bundled CSS to
-    tint **only** the icon's SVG fill.
+  - `--zen-primary-color` — **Zen's own native variable**, drives the
+    icon fill via Zen's own light/dark-aware blend formula (see above).
   - `--zen-folder-text-color` — our own variable, used by the bundled CSS
-    to color the label text, independent of the fill.
+    to color the label text.
   - `--zen-folder-stroke` — **Zen's own native variable.** Its built-in
     `zen-folders.css` already binds the folder icon's SVG stroke to this
     variable, so setting it is enough to recolor the icon's outline — no
@@ -82,20 +103,19 @@ file into your profile's `chrome/JS/` folder and the `.css` rules into
 
 ## Notes / things that may need tweaking
 
-- The icon-tinting/stroking CSS selectors (`.tab-group-folder-icon svg
-  path`, etc.) are a best-effort match based on Zen's folder markup. Zen's
-  internal HTML structure can change between releases. If the icon doesn't
-  pick up a value after installing, right-click the folder icon → Inspect
-  (via the Browser Toolbox, `Ctrl+Shift+Alt+I`) and adjust the selectors in
-  `zen-folder-color-picker.css` to match what you see.
-- The "current color" the picker pre-fills with on first open is read via
-  `getComputedStyle` on the folder's icon path and label at the moment you
-  right-click, so it reflects whatever theme/mod is currently painting the
-  folder — including this mod's own previous output if you'd already
-  customized a *different* property on that same folder.
+- The exact formula behind `--zen-folder-behind-bgcolor` was read off your
+  browser's computed styles rather than Zen's source, so the *precise*
+  mix percentages/colors may differ slightly by Zen version — but since we
+  don't reimplement the formula ourselves (we just feed
+  `--zen-primary-color` into whatever Zen currently does with it), this
+  mod stays correct even if Zen tweaks those exact numbers later.
+- The outline-stroke CSS selectors (`.tab-group-folder-icon svg path`,
+  etc.) are a best-effort match based on Zen's folder markup and could
+  need adjusting on a different Zen version — use the Browser Toolbox
+  (`Ctrl+Shift+Alt+I`) to check if something doesn't pick up.
 - Only the folder's own icon fill/outline and label text are changed — this
   does not touch tab colors inside the folder, and it does not touch the
   label bar's background.
-- If Zen ever renames the `zenFolderActions` popup id or the `zen-folder`
-  tag, the context-menu item simply won't appear (the script fails
-  gracefully rather than throwing).
+- If Zen ever renames the `zenFolderActions` popup id, the `--zen-primary-color`
+  / `--zen-folder-stroke` variables, or the `zen-folder` tag, the affected
+  part of this mod simply stops having an effect rather than throwing.

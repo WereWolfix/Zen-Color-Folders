@@ -126,11 +126,11 @@
     return folder.querySelector(".tab-group-label") || folder.querySelector(".tab-group-label-container");
   }
 
-  function computedFillHex(folder, fallback) {
-    const el = iconShapeEl(folder);
-    if (!el) return fallback;
+  function computedPrimaryColorHex(folder, fallback) {
     try {
-      return rgbStringToHex(getComputedStyle(el).fill) || fallback;
+      const raw = getComputedStyle(folder).getPropertyValue("--zen-primary-color").trim();
+      if (!raw) return fallback;
+      return rgbStringToHex(raw) || (HEX_RE.test(raw) ? raw : fallback);
     } catch (e) {
       return fallback;
     }
@@ -175,11 +175,20 @@
     const { fill, outline, text, width } = normalizeEntry(entry);
 
     if (fill) {
-      // Our own variable — the bundled CSS uses it to tint only the
-      // folder icon's fill, not the label bar background.
-      folder.style.setProperty("--zen-folder-color", fill);
+      // --zen-primary-color is Zen's OWN native variable. Its built-in
+      // zen-folders.css derives the icon's background/fill via
+      // --zen-folder-behind-bgcolor: light-dark(color-mix(in srgb,
+      // var(--zen-primary-color) 60%, gray), color-mix(in srgb,
+      // var(--zen-primary-color) 60%, #c1c1c1)) — i.e. it blends the
+      // primary color with gray/light-gray depending on light/dark mode.
+      // Setting --zen-primary-color (instead of forcing `fill:` directly,
+      // like an earlier version of this mod did) lets that native
+      // formula run as normal, so the icon keeps the same light/dark
+      // blended variation Zen already gives every folder — just with a
+      // custom base color instead of one of the presets.
+      folder.style.setProperty("--zen-primary-color", fill);
     } else {
-      folder.style.removeProperty("--zen-folder-color");
+      folder.style.removeProperty("--zen-primary-color");
     }
 
     if (text) {
@@ -544,7 +553,7 @@
     // (its native default color) rather than an arbitrary guess. Once a
     // folder HAS a stored entry, respect exactly what was saved —
     // including any wheel the user deliberately turned off.
-    const fillHex = entry.fill || computedFillHex(folder, "#8a8fff");
+    const fillHex = entry.fill || computedPrimaryColorHex(folder, "#8a8fff");
     const outlineHex = entry.outline || computedStrokeHex(folder, "#2a2f6d");
     const textHex = entry.text || computedTextHex(folder, "#ffffff");
     const width = hasStoredEntry ? entry.width : computedStrokeWidth(folder, 2);
