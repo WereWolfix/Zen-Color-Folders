@@ -28,16 +28,19 @@ outline thickness control and a screen-wide eyedropper on every wheel.
   - a **"Reset All"** button at the bottom clears every custom color for
     the folder at once (equivalent to never having customized it)
 
-### Screen-wide eyedropper
+### Screen-wide color picker
 
-Every wheel's 🎨 button opens the browser's native `EyeDropper` API, which
-lets you click **anywhere on your screen** — not just inside the panel or
-even inside the browser window — to sample a color, exactly like the
-system color picker's eyedropper tool. Whatever pixel you click becomes
-that wheel's color. Press <kbd>Esc</kbd> to cancel without picking
-anything. If your Zen version is built on a Firefox release that doesn't
-yet ship `EyeDropper`, the button just does nothing (checked via
-`typeof EyeDropper === "undefined"`) rather than throwing.
+Every wheel's 🎨 button lets you sample a color from **anywhere on your
+screen**. Firefox generally doesn't expose the standard Web `EyeDropper`
+API to chrome-privileged windows like `browser.xhtml` (only to regular web
+content), even on an up-to-date build — so the button tries it first in
+case that ever changes, then falls back to a hidden native
+`<input type="color">`. Clicking that opens Firefox's own OS-native
+color-picker dialog, and on Windows, macOS, and Linux that dialog has its
+own built-in eyedropper/loupe tool that can sample any pixel anywhere on
+your screen — same practical result, just routed through a mechanism that
+actually works from this context. Whatever color you land on becomes that
+wheel's color as soon as you pick it.
 
 ### Fill goes through Zen's own variable, not a flat override
 
@@ -161,9 +164,14 @@ file into your profile's `chrome/JS/` folder and the `.css` rules into
   etc.) are a best-effort match based on Zen's folder markup and could
   need adjusting on a different Zen version — use the Browser Toolbox
   (`Ctrl+Shift+Alt+I`) to check if something doesn't pick up.
-- The eyedropper depends on the `EyeDropper` Window API being available in
-  your Zen/Firefox build. It's a standard API, but if your build predates
-  it, the button is inert rather than broken.
+- The eyedropper tries the standard `EyeDropper` Window API first, but
+  that's typically unavailable in chrome-privileged windows regardless of
+  Firefox version — the real path is the native OS color-picker dialog
+  (via a hidden `<input type="color">`), whose own eyedropper/loupe tool
+  does the actual screen-sampling. If a platform's native color dialog
+  doesn't have an eyedropper of its own, this mod can't add one — that's
+  an OS-level limitation, not something CSS/JS in the browser can work
+  around.
 - Only the folder's own icon fill/outline and label text are changed — this
   does not touch tab colors inside the folder, and it does not touch the
   label bar's background.

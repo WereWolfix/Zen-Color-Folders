@@ -353,6 +353,23 @@
     eyedropBtn.style.fontSize = "10px";
     eyedropBtn.style.padding = "0 4px";
 
+    // Firefox generally doesn't expose the Web EyeDropper API to chrome-
+    // privileged windows (browser.xhtml), only to content pages — so we
+    // can't rely on `new EyeDropper()` here even on an up-to-date build.
+    // A hidden native <input type="color"> gives us a reliable path to
+    // the SAME underlying OS color-picker dialog Firefox itself uses,
+    // and on Windows/macOS/Linux that dialog has its own built-in
+    // eyedropper/loupe tool that can sample any pixel on the whole
+    // screen — same end result, just triggered through a mechanism that
+    // actually works in this context.
+    const nativeColorInput = html("input");
+    nativeColorInput.type = "color";
+    nativeColorInput.style.position = "absolute";
+    nativeColorInput.style.width = "0";
+    nativeColorInput.style.height = "0";
+    nativeColorInput.style.opacity = "0";
+    nativeColorInput.style.pointerEvents = "none";
+
     const resetBtn = xul("button");
     resetBtn.setAttribute("label", "Reset");
     resetBtn.classList.add("zen-folder-color-wheel-reset");
@@ -360,7 +377,7 @@
     resetBtn.style.fontSize = "10px";
     resetBtn.style.padding = "0 4px";
 
-    row.append(preview, hexInput, eyedropBtn, resetBtn);
+    row.append(preview, hexInput, eyedropBtn, resetBtn, nativeColorInput);
     wrapper.append(title, canvas, valueSlider, row);
     parent.append(wrapper);
 
@@ -439,21 +456,29 @@
       }
     });
 
+    nativeColorInput.addEventListener("input", () => {
+      if (HEX_RE.test(nativeColorInput.value)) setHex(nativeColorInput.value);
+    });
+
     eyedropBtn.addEventListener("command", async () => {
-      // EyeDropper is a standard Window API — available in this
-      // privileged chrome window the same as in a content page — that
-      // lets the user sample any pixel color from ANYWHERE on screen,
-      // including outside the browser window entirely.
-      if (typeof EyeDropper === "undefined") {
-        eyedropBtn.setAttribute("tooltiptext", "Screen color picker isn't available in this browser version");
-        return;
+      // Try the standard Web EyeDropper API first, in case a future
+      // Zen/Firefox build does expose it to chrome windows...
+      if (typeof EyeDropper !== "undefined") {
+        try {
+          const result = await new EyeDropper().open();
+          if (result && result.sRGBHex) setHex(result.sRGBHex);
+          return;
+        } catch (e) {
+          // user pressed Escape / cancelled the EyeDropper — nothing to do
+          return;
+        }
       }
-      try {
-        const result = await new EyeDropper().open();
-        if (result && result.sRGBHex) setHex(result.sRGBHex);
-      } catch (e) {
-        // user pressed Escape / cancelled — nothing to do
-      }
+      // ...otherwise fall back to the native OS color-picker dialog via a
+      // hidden <input type="color">. On Windows/macOS/Linux, that dialog
+      // has its own eyedropper/loupe tool that can sample any pixel
+      // anywhere on your screen, same as the Web API would have.
+      nativeColorInput.value = getHex() || "#8a8fff";
+      nativeColorInput.click();
     });
 
     function setHex(hex) {
