@@ -1,18 +1,18 @@
 // ==UserScript==
 // @name           Zen Folder Color Picker
-// @description    Adds a "Change Color…" item to the sidebar folder context menu and lets you
-//                  pick any custom color for that folder from a color wheel.
+// @description    Adds a "Change Color…" item to the sidebar folder context menu with separate
+//                  color wheels for fill and outline, plus an outline thickness slider.
 // @include        main
 // ==/UserScript==
 
 (function () {
   "use strict";
 
-  const PREF_KEY = "extensions.zenfoldercolor.colors"; // JSON: { [folderId]: "#rrggbb" }
+  const PREF_KEY = "extensions.zenfoldercolor.colors"; // JSON: { [folderId]: {fill, outline, width} }
   const MENU_ITEM_ID = "zen-folder-change-color-item";
   const MENU_SEP_ID = "zen-folder-change-color-sep";
   const PANEL_ID = "zen-folder-color-picker-panel";
-  const CONTEXT_MENU_ID = "zenFolderActions"; // the popup Zen wires to folder labels via context="..."
+  const CONTEXT_MENU_ID = "zenFolderActions"; // popup Zen wires to folder labels via context="..."
   const HTML_NS = "http://www.w3.org/1999/xhtml";
 
   function html(tag) {
@@ -36,6 +36,18 @@
 
   function saveColors(map) {
     Services.prefs.setStringPref(PREF_KEY, JSON.stringify(map));
+  }
+
+  // Normalizes an entry, migrating the old "just a hex string" format
+  // (fill-only, no outline) to the new object format.
+  function normalizeEntry(entry) {
+    if (!entry) return { fill: null, outline: null, width: 2 };
+    if (typeof entry === "string") return { fill: entry, outline: null, width: 2 };
+    return {
+      fill: entry.fill || null,
+      outline: entry.outline || null,
+      width: typeof entry.width === "number" ? entry.width : 2,
+    };
   }
 
   function ensureFolderId(folder) {
@@ -92,18 +104,34 @@
     return luminance > 0.6 ? "#111111" : "#ffffff";
   }
 
+  const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
   // ---------------------------------------------------------------------
   // Applying colors to folders
   // ---------------------------------------------------------------------
 
-  function applyColor(folder, hex) {
-    if (hex) {
-      folder.style.setProperty("--zen-folder-color", hex);
-      folder.style.setProperty("--zen-folder-color-contrast", contrastText(hex));
-      folder.setAttribute("zen-custom-colored", "true");
+  function applyColor(folder, entry) {
+    const { fill, outline, width } = normalizeEntry(entry);
+
+    if (fill) {
+      folder.style.setProperty("--zen-folder-color", fill);
+      folder.style.setProperty("--zen-folder-color-contrast", contrastText(fill));
     } else {
       folder.style.removeProperty("--zen-folder-color");
       folder.style.removeProperty("--zen-folder-color-contrast");
+    }
+
+    if (outline) {
+      folder.style.setProperty("--zen-folder-outline-color", outline);
+      folder.style.setProperty("--zen-folder-outline-width", `${width}px`);
+    } else {
+      folder.style.removeProperty("--zen-folder-outline-color");
+      folder.style.removeProperty("--zen-folder-outline-width");
+    }
+
+    if (fill || outline) {
+      folder.setAttribute("zen-custom-colored", "true");
+    } else {
       folder.removeAttribute("zen-custom-colored");
     }
   }
@@ -116,12 +144,156 @@
   }
 
   // ---------------------------------------------------------------------
-  // Color wheel panel
+  // Reusable color wheel widget
   // ---------------------------------------------------------------------
 
-  let panel, canvas, ctx, valueSlider, hexInput, preview;
+  // Builds one wheel + value slider + hex field inside `parent`, labeled
+  // with `label`. Returns { getHex, setHex, root }.
+  function buildWheelWidget(parent, label) {
+    const wrapper = xul("vbox");
+    wrapper.style.gap = "4px";
+    wrapper.style.alignItems = "center";
+
+    const title = html("div");
+    title.textContent = label;
+    title.style.fontSize = "11px";
+    title.style.opacity = "0.75";
+
+    const canvas = html("canvas");
+    canvas.width = 140;
+    canvas.height = 140;
+    canvas.style.cursor = "crosshair";
+    canvas.style.borderRadius = "50%";
+    const ctx = canvas.getContext("2d");
+
+    const valueSlider = html("input");
+    valueSlider.type = "range";
+    valueSlider.min = "0";
+    valueSlider.max = "100";
+    valueSlider.value = "100";
+    valueSlider.style.width = "140px";
+
+    const row = xul("hbox");
+    row.style.gap = "6px";
+    row.style.alignItems = "center";
+
+    const preview = html("div");
+    preview.style.width = "18px";
+    preview.style.height = "18px";
+    preview.style.borderRadius = "50%";
+    preview.style.border = "1px solid rgba(0,0,0,0.3)";
+    preview.style.flexShrink = "0";
+
+    const hexInput = html("input");
+    hexInput.type = "text";
+    hexInput.maxLength = 7;
+    hexInput.style.width = "80px";
+    hexInput.style.fontFamily = "monospace";
+
+    row.append(preview, hexInput);
+    wrapper.append(title, canvas, valueSlider, row);
+    parent.append(wrapper);
+
+    let hue = 0, sat = 0;
+
+    function draw() {
+      const w = canvas.width, h = canvas.height;
+      const cx = w / 2, cy = h / 2, radius = w / 2;
+      const value = valueSlider.value / 100;
+      const img = ctx.createImageData(w, h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const dx = x - cx, dy = y - cy;
+          const r = Math.sqrt(dx * dx + dy * dy);
+          const idx = (y * w + x) * 4;
+          if (r <= radius) {
+            let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+            if (angle < 0) angle += 360;
+            const s = Math.min(r / radius, 1);
+            const hex = hsvToHex(angle, s, value);
+            img.data[idx] = parseInt(hex.slice(1, 3), 16);
+            img.data[idx + 1] = parseInt(hex.slice(3, 5), 16);
+            img.data[idx + 2] = parseInt(hex.slice(5, 7), 16);
+            img.data[idx + 3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+
+    function syncFromWheelState() {
+      const value = valueSlider.value / 100;
+      const hex = hsvToHex(hue, sat, value);
+      hexInput.value = hex;
+      preview.style.background = hex;
+    }
+
+    function pickAt(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const x = clientX - rect.left, y = clientY - rect.top;
+      const cx = canvas.width / 2, cy = canvas.height / 2, radius = canvas.width / 2;
+      const dx = x - cx, dy = y - cy;
+      const r = Math.min(Math.sqrt(dx * dx + dy * dy), radius);
+      let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+      if (angle < 0) angle += 360;
+      hue = angle;
+      sat = r / radius;
+      syncFromWheelState();
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      pickAt(e.clientX, e.clientY);
+      const move = (ev) => pickAt(ev.clientX, ev.clientY);
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    });
+
+    valueSlider.addEventListener("input", () => {
+      draw();
+      syncFromWheelState();
+    });
+
+    hexInput.addEventListener("change", () => {
+      const v = hexInput.value.trim();
+      if (HEX_RE.test(v)) {
+        preview.style.background = v;
+        const hsv = hexToHsv(v);
+        hue = hsv.h;
+        sat = hsv.s;
+        valueSlider.value = Math.round(hsv.v * 100);
+        draw();
+      }
+    });
+
+    function setHex(hex) {
+      const v = HEX_RE.test(hex) ? hex : "#8a8fff";
+      const hsv = hexToHsv(v);
+      hue = hsv.h;
+      sat = hsv.s;
+      valueSlider.value = Math.round(hsv.v * 100);
+      hexInput.value = v;
+      preview.style.background = v;
+      draw();
+    }
+
+    function getHex() {
+      const v = hexInput.value.trim();
+      return HEX_RE.test(v) ? v : null;
+    }
+
+    return { getHex, setHex, root: wrapper };
+  }
+
+  // ---------------------------------------------------------------------
+  // Panel: fill wheel + outline wheel + thickness slider + buttons
+  // ---------------------------------------------------------------------
+
+  let panel, fillWidget, outlineWidget, widthSlider, widthLabel, outlineEnabledCheckbox;
   let activeFolder = null;
-  let wheelHue = 0, wheelSat = 0;
 
   function buildPanel() {
     panel = xul("panel");
@@ -133,44 +305,59 @@
     const container = xul("vbox");
     container.style.padding = "12px";
     container.style.gap = "8px";
-    container.style.alignItems = "center";
 
-    canvas = html("canvas");
-    canvas.width = 180;
-    canvas.height = 180;
-    canvas.style.cursor = "crosshair";
-    canvas.style.borderRadius = "50%";
-    ctx = canvas.getContext("2d");
+    const wheelsRow = xul("hbox");
+    wheelsRow.style.gap = "16px";
 
-    valueSlider = html("input");
-    valueSlider.type = "range";
-    valueSlider.min = "0";
-    valueSlider.max = "100";
-    valueSlider.value = "100";
-    valueSlider.style.width = "180px";
+    fillWidget = buildWheelWidget(wheelsRow, "Fill Color");
+    outlineWidget = buildWheelWidget(wheelsRow, "Outline Color");
 
-    const row = xul("hbox");
-    row.style.gap = "6px";
-    row.style.alignItems = "center";
+    container.append(wheelsRow);
 
-    preview = html("div");
-    preview.style.width = "22px";
-    preview.style.height = "22px";
-    preview.style.borderRadius = "50%";
-    preview.style.border = "1px solid rgba(0,0,0,0.3)";
-    preview.style.flexShrink = "0";
+    // Outline enable toggle
+    const outlineRow = xul("hbox");
+    outlineRow.style.alignItems = "center";
+    outlineRow.style.gap = "6px";
+    outlineRow.style.marginTop = "4px";
 
-    hexInput = html("input");
-    hexInput.type = "text";
-    hexInput.maxLength = 7;
-    hexInput.style.width = "90px";
-    hexInput.style.fontFamily = "monospace";
+    outlineEnabledCheckbox = xul("checkbox");
+    outlineEnabledCheckbox.setAttribute("label", "Enable outline");
+    outlineEnabledCheckbox.addEventListener("command", () => {
+      const enabled = outlineEnabledCheckbox.checked;
+      outlineWidget.root.style.opacity = enabled ? "1" : "0.4";
+      outlineWidget.root.style.pointerEvents = enabled ? "auto" : "none";
+      widthSlider.disabled = !enabled;
+    });
+    outlineRow.append(outlineEnabledCheckbox);
+    container.append(outlineRow);
 
-    row.append(preview, hexInput);
+    // Thickness slider
+    const widthRow = xul("vbox");
+    widthRow.style.gap = "2px";
+    widthRow.style.marginTop = "4px";
 
+    widthLabel = html("div");
+    widthLabel.style.fontSize = "11px";
+    widthLabel.style.opacity = "0.75";
+    widthLabel.textContent = "Outline Thickness: 2px";
+
+    widthSlider = html("input");
+    widthSlider.type = "range";
+    widthSlider.min = "1";
+    widthSlider.max = "8";
+    widthSlider.value = "2";
+    widthSlider.style.width = "296px";
+    widthSlider.addEventListener("input", () => {
+      widthLabel.textContent = `Outline Thickness: ${widthSlider.value}px`;
+    });
+
+    widthRow.append(widthLabel, widthSlider);
+    container.append(widthRow);
+
+    // Buttons
     const btnRow = xul("hbox");
     btnRow.style.gap = "6px";
-    btnRow.style.marginTop = "6px";
+    btnRow.style.marginTop = "8px";
 
     const applyBtn = xul("button");
     applyBtn.setAttribute("label", "Apply");
@@ -185,96 +372,24 @@
     cancelBtn.addEventListener("command", () => panel.hidePopup());
 
     btnRow.append(applyBtn, resetBtn, cancelBtn);
-    container.append(canvas, valueSlider, row, btnRow);
+    container.append(btnRow);
+
     panel.append(container);
-
     (document.getElementById("mainPopupSet") || document.documentElement).appendChild(panel);
-
-    canvas.addEventListener("mousedown", startPick);
-    valueSlider.addEventListener("input", () => {
-      drawWheel();
-      syncFromWheelState();
-    });
-    hexInput.addEventListener("change", () => {
-      const v = hexInput.value.trim();
-      if (/^#[0-9a-fA-F]{6}$/.test(v)) {
-        preview.style.background = v;
-        const hsv = hexToHsv(v);
-        wheelHue = hsv.h;
-        wheelSat = hsv.s;
-        valueSlider.value = Math.round(hsv.v * 100);
-        drawWheel();
-      }
-    });
-
-    drawWheel();
-  }
-
-  function drawWheel() {
-    const w = canvas.width, h = canvas.height;
-    const cx = w / 2, cy = h / 2, radius = w / 2;
-    const value = valueSlider.value / 100;
-    const img = ctx.createImageData(w, h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const dx = x - cx, dy = y - cy;
-        const r = Math.sqrt(dx * dx + dy * dy);
-        const idx = (y * w + x) * 4;
-        if (r <= radius) {
-          let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-          if (angle < 0) angle += 360;
-          const s = Math.min(r / radius, 1);
-          const hex = hsvToHex(angle, s, value);
-          img.data[idx] = parseInt(hex.slice(1, 3), 16);
-          img.data[idx + 1] = parseInt(hex.slice(3, 5), 16);
-          img.data[idx + 2] = parseInt(hex.slice(5, 7), 16);
-          img.data[idx + 3] = 255;
-        }
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-  }
-
-  function pickAt(clientX, clientY) {
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left, y = clientY - rect.top;
-    const cx = canvas.width / 2, cy = canvas.height / 2, radius = canvas.width / 2;
-    const dx = x - cx, dy = y - cy;
-    const r = Math.min(Math.sqrt(dx * dx + dy * dy), radius);
-    let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-    if (angle < 0) angle += 360;
-    wheelHue = angle;
-    wheelSat = r / radius;
-    syncFromWheelState();
-  }
-
-  function startPick(e) {
-    pickAt(e.clientX, e.clientY);
-    const move = (ev) => pickAt(ev.clientX, ev.clientY);
-    const up = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  }
-
-  function syncFromWheelState() {
-    const value = valueSlider.value / 100;
-    const hex = hsvToHex(wheelHue, wheelSat, value);
-    hexInput.value = hex;
-    preview.style.background = hex;
   }
 
   function commitColor() {
     if (!activeFolder) return;
-    const hex = hexInput.value.trim();
-    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+    const fill = fillWidget.getHex();
+    const outlineOn = outlineEnabledCheckbox.checked;
+    const outline = outlineOn ? outlineWidget.getHex() : null;
+    const width = parseInt(widthSlider.value, 10);
+
     const id = ensureFolderId(activeFolder);
     const colors = loadColors();
-    colors[id] = hex;
+    colors[id] = { fill, outline, width };
     saveColors(colors);
-    applyColor(activeFolder, hex);
+    applyColor(activeFolder, colors[id]);
     panel.hidePopup();
   }
 
@@ -293,15 +408,19 @@
     activeFolder = folder;
     const id = ensureFolderId(folder);
     const colors = loadColors();
-    const current = colors[id] || "#8a8fff";
+    const entry = normalizeEntry(colors[id]);
 
-    const hsv = hexToHsv(current);
-    wheelHue = hsv.h;
-    wheelSat = hsv.s;
-    valueSlider.value = Math.round(hsv.v * 100);
-    hexInput.value = current;
-    preview.style.background = current;
-    drawWheel();
+    fillWidget.setHex(entry.fill || "#8a8fff");
+    outlineWidget.setHex(entry.outline || "#2a2f6d");
+
+    const hasOutline = !!entry.outline;
+    outlineEnabledCheckbox.checked = hasOutline;
+    outlineWidget.root.style.opacity = hasOutline ? "1" : "0.4";
+    outlineWidget.root.style.pointerEvents = hasOutline ? "auto" : "none";
+
+    widthSlider.value = String(entry.width || 2);
+    widthSlider.disabled = !hasOutline;
+    widthLabel.textContent = `Outline Thickness: ${entry.width || 2}px`;
 
     panel.openPopup(anchor || folder, "bottomcenter topleft", 0, 4, false, false);
   }

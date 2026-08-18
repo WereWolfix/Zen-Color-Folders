@@ -1,7 +1,16 @@
-/* Applies the custom color chosen via the color wheel to a folder's
-   label text and folder icon. The script sets --zen-folder-color and
-   --zen-folder-color-contrast as inline custom properties on the
-   <zen-folder> element and adds zen-custom-colored="true". */
+/* Applies the custom colors chosen via the color wheels to a folder's
+   label, icon fill, and (optionally) an outline/border.
+
+   The script sets these custom properties inline on the <zen-folder>
+   element when applicable:
+     --zen-folder-color            fill color (icon + accent)
+     --zen-folder-color-contrast   readable text color for the fill
+     --zen-folder-outline-color    outline/border color (only if enabled)
+     --zen-folder-outline-width    outline thickness, e.g. "3px"
+
+   and toggles zen-custom-colored="true" when at least one is set. */
+
+/* ---- Fill ---- */
 
 zen-folder[zen-custom-colored="true"] .tab-group-label-container {
   color: var(--zen-folder-color-contrast, inherit) !important;
@@ -11,21 +20,38 @@ zen-folder[zen-custom-colored="true"] .tab-group-label {
   color: var(--zen-folder-color-contrast, inherit) !important;
 }
 
-/* Folder icon: tinted to the custom color. If your Zen version renders
-   the folder icon differently, use the Browser Toolbox (Ctrl+Shift+Alt+I)
-   to inspect a folder and adjust these selectors to match. */
+/* Folder icon: tinted to the fill color. If your Zen version renders the
+   folder icon differently, use the Browser Toolbox (Ctrl+Shift+Alt+I) to
+   inspect a folder and adjust these selectors to match. */
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg path,
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg rect,
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg polygon {
   fill: var(--zen-folder-color) !important;
 }
 
-/* Label container background wash, subtle, for quick scanning in the sidebar */
 zen-folder[zen-custom-colored="true"] .tab-group-label-container {
-  background-color: color-mix(in srgb, var(--zen-folder-color) 18%, transparent) !important;
+  background-color: color-mix(in srgb, var(--zen-folder-color, transparent) 18%, transparent) !important;
   border-radius: 6px;
 }
 
 zen-folder[zen-custom-colored="true"] .tab-group-label-container:hover {
-  background-color: color-mix(in srgb, var(--zen-folder-color) 28%, transparent) !important;
+  background-color: color-mix(in srgb, var(--zen-folder-color, transparent) 28%, transparent) !important;
+}
+
+/* ---- Outline ---- */
+/* Only applied when --zen-folder-outline-color is actually set (i.e. the
+   "Enable outline" checkbox was on when you hit Apply). */
+
+zen-folder[zen-custom-colored="true"] .tab-group-label-container {
+  border: var(--zen-folder-outline-width, 0px) solid var(--zen-folder-outline-color, transparent) !important;
+  box-sizing: border-box;
+}
+
+/* Optional: also outline the folder icon itself via SVG stroke. Safe to
+   remove this block if it looks odd with your icon's paths. */
+zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg path,
+zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg rect,
+zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg polygon {
+  stroke: var(--zen-folder-outline-color, transparent);
+  stroke-width: var(--zen-folder-outline-width, 0px);
 }
