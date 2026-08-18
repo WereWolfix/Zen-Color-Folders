@@ -3,8 +3,8 @@
 Adds a **"Change Color…"** item to the right-click menu on sidebar folders in
 Zen Browser, opening a panel with three independent color wheels — **icon
 fill**, **icon outline**, and **label text** — plus a decimal-capable
-outline thickness control and a genuine click-to-sample eyedropper on every
-wheel.
+outline thickness control and a full-screen eyedropper with a live preview
+on every wheel.
 
 ## How it works
 
@@ -29,24 +29,47 @@ wheel.
   - a **"Reset All"** button at the bottom clears every custom color for
     the folder at once (equivalent to never having customized it)
 
-### The eyedropper actually samples pixels, not a dialog
+### The eyedropper works on your whole screen, with a live preview
 
-Every wheel's 🎨 button is a real click-to-sample eyedropper: click it,
-then click anywhere, and whatever color is under your cursor becomes that
-wheel's color. <kbd>Esc</kbd> cancels without picking anything.
+Every wheel's 🎨 button is a real eyedropper: click it, move your cursor
+anywhere — including over other applications, not just the browser — and
+a small magnifier follows your cursor showing the color under it as a hex
+code, live-updating that wheel's preview swatch and hex field as you move.
+Click to commit to that pixel, or press <kbd>Esc</kbd> to cancel (which
+restores whatever color the wheel had before you started picking).
 
-The standard Web `EyeDropper` API isn't exposed to chrome-privileged
-windows like `browser.xhtml` (only to regular web content), so this
-doesn't use that. Instead it uses `drawWindow()` — a method only available
-to privileged/chrome JS — to rasterize the current browser window into an
-offscreen canvas, overlays a transparent full-window click-catcher, and
-reads back the exact pixel color under wherever you click.
+To reach pixels outside the browser window, this uses Firefox's own
+screen-sharing capture path (`getUserMedia({video: {mediaSource:
+"screen"}})`) — the same mechanism behind "Share Screen". **The first
+time you use it, Firefox will show its native "choose what to share"
+dialog** — pick **Entire Screen** and allow it. That grants a live video
+feed of your whole display, which gets drawn into a temporary, borderless,
+full-screen overlay window so you can click any pixel on it — including
+ones belonging to other applications, since you're literally clicking on
+a live mirror of your screen. The overlay and the underlying capture are
+torn down as soon as you pick a color or cancel.
 
-**Scope:** this can only see pixels within the current browser window
-(its own UI, plus whatever page content is rendered inside it) — it can't
-reach outside the browser process to your OS desktop or other
-applications. That's a hard limitation of what chrome-privileged browser
-JS is allowed to touch, not something this mod can work around.
+If screen capture isn't available or you decline the prompt, the
+eyedropper automatically falls back to the previous, more limited method —
+sampling only pixels within the current browser window itself via the
+chrome-only `drawWindow()` method — so the button still does *something*
+useful either way, it just won't be able to reach outside the browser in
+that case.
+
+**Known caveats:**
+- Multi-monitor setups: the overlay is currently sized to your *primary*
+  display (`window.screen.width/height`), so on a multi-monitor setup it
+  may not cover secondary displays. Let me know if you want that
+  extended — it needs enumerating all screens and unioning their bounds,
+  which I kept out for now to keep the implementation simpler.
+- You'll see Firefox's screen-share picker each time you use the
+  eyedropper (there's no way to skip that prompt — it's part of Firefox's
+  permission model, not something this mod controls).
+- The overlay briefly shows a live mirror of your screen rendered inside
+  it — moving your cursor over that mirror is what the magnifier is
+  reading from, so there's a very slight (one-frame) lag between the real
+  cursor position and what the magnifier reflects, same as any live video
+  feed.
 
 ### Fill goes through Zen's own variable, not a flat override
 
@@ -158,9 +181,11 @@ file into your profile's `chrome/JS/` folder and the `.css` rules into
   etc.) are a best-effort match based on Zen's folder markup and could
   need adjusting on a different Zen version — use the Browser Toolbox
   (`Ctrl+Shift+Alt+I`) to check if something doesn't pick up.
-- The eyedropper only sees the current browser window's own rendered
-  pixels (see "Scope" above) — it cannot sample colors from other
-  applications on your desktop.
+- The eyedropper's full-screen mode needs the `getUserMedia`/screen-share
+  APIs to be available and permitted; if that path fails for any reason
+  it silently falls back to the browser-window-only method (see above) —
+  see the "Known caveats" list above for the multi-monitor and prompt
+  details.
 - Only the folder's own icon fill/outline and label text are changed — this
   does not touch tab colors inside the folder, and it does not touch the
   label bar's background.
