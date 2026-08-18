@@ -126,9 +126,9 @@
     return folder.querySelector(".tab-group-label") || folder.querySelector(".tab-group-label-container");
   }
 
-  function computedPrimaryColorHex(folder, fallback) {
+  function computedVarHex(folder, varName, fallback) {
     try {
-      const raw = getComputedStyle(folder).getPropertyValue("--zen-primary-color").trim();
+      const raw = getComputedStyle(folder).getPropertyValue(varName).trim();
       if (!raw) return fallback;
       return rgbStringToHex(raw) || (HEX_RE.test(raw) ? raw : fallback);
     } catch (e) {
@@ -136,7 +136,61 @@
     }
   }
 
+  function computedPrimaryColorHex(folder, fallback) {
+    return computedVarHex(folder, "--zen-primary-color", fallback);
+  }
+
+  function hexToRgbArr(hex) {
+    if (!HEX_RE.test(hex)) return null;
+    return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+  }
+
+  function rgbArrToHex(arr) {
+    const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+    return `#${toHex(arr[0])}${toHex(arr[1])}${toHex(arr[2])}`;
+  }
+
+  // Approximates CSS color-mix(in srgb, <hex> percent%, <otherRgbArr>) —
+  // a plain per-channel linear blend, which is what color-mix does for
+  // the srgb color space.
+  function mixHex(hex, percent, otherRgbArr) {
+    const rgb = hexToRgbArr(hex);
+    if (!rgb) return null;
+    const p = percent / 100;
+    const mixed = rgb.map((v, i) => v * p + otherRgbArr[i] * (1 - p));
+    return rgbArrToHex(mixed);
+  }
+
+  function isDarkMode() {
+    try {
+      return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    } catch (e) {
+      return true;
+    }
+  }
+
+  // Reproduces Zen's own default formula for --zen-folder-stroke:
+  //   light-dark(
+  //     color-mix(in srgb, var(--zen-primary-color) 50%, black),
+  //     color-mix(in srgb, var(--zen-colors-primary) 15%, #ebebeb)
+  //   )
+  // so the outline wheel's starting color actually matches what Zen
+  // would show by default, instead of an approximation.
+  function computedDefaultStrokeHex(folder, fallback) {
+    const dark = isDarkMode();
+    const varName = dark ? "--zen-primary-color" : "--zen-colors-primary";
+    const base = computedVarHex(folder, varName, null) || computedPrimaryColorHex(folder, null);
+    if (!base) return fallback;
+    const mixed = dark ? mixHex(base, 50, [0, 0, 0]) : mixHex(base, 15, [235, 235, 235]);
+    return mixed || fallback;
+  }
+
   function computedStrokeHex(folder, fallback) {
+    // Prefer reproducing Zen's actual default-stroke formula...
+    const formulaHex = computedDefaultStrokeHex(folder, null);
+    if (formulaHex) return formulaHex;
+    // ...fall back to whatever's actually rendered on the icon (covers
+    // folders that already have some other explicit stroke)...
     const el = iconShapeEl(folder);
     if (el) {
       try {
@@ -146,11 +200,7 @@
         /* fall through */
       }
     }
-    // A folder with no custom outline typically has no colored stroke to
-    // read back (e.g. computed "stroke" comes back as "none"). In that
-    // case, match it to the folder's own primary color — the same base
-    // color Zen already uses for that folder's fill — rather than an
-    // arbitrary fixed guess.
+    // ...and as a last resort, the folder's primary color.
     return computedPrimaryColorHex(folder, fallback);
   }
 
@@ -207,11 +257,25 @@
 
     if (outline) {
       // --zen-folder-stroke is Zen's own native variable that its
-      // zen-folders.css already binds to the folder icon's SVG stroke —
-      // setting it here is enough to recolor the icon outline, no extra
-      // CSS needed on our end. --zen-folder-stroke-width is our own
-      // variable (Zen doesn't expose one), applied via our stylesheet.
-      folder.style.setProperty("--zen-folder-stroke", outline);
+      // zen-folders.css already binds to the folder icon's SVG stroke.
+      // Its own DEFAULT value is itself a formula:
+      //   light-dark(
+      //     color-mix(in srgb, var(--zen-primary-color) 50%, black),
+      //     color-mix(in srgb, var(--zen-colors-primary) 15%, #ebebeb)
+      //   )
+      // i.e. Zen blends a base color with black (dark mode) or a near-
+      // white gray (light mode) so the outline stays visible in both
+      // themes. Rather than overwrite that with a flat hex (losing the
+      // light/dark adaptation, same mistake the fill override made
+      // earlier), we reuse the exact same formula with our chosen color
+      // standing in for the primary-color variable, so the outline keeps
+      // that same light/dark blending behavior.
+      const strokeExpr =
+        `light-dark(color-mix(in srgb, ${outline} 50%, black), ` +
+        `color-mix(in srgb, ${outline} 15%, #ebebeb))`;
+      folder.style.setProperty("--zen-folder-stroke", strokeExpr);
+      // --zen-folder-stroke-width is our own variable (Zen doesn't
+      // expose one), applied via our stylesheet.
       folder.style.setProperty("--zen-folder-stroke-width", `${width}px`);
     } else {
       folder.style.removeProperty("--zen-folder-stroke");
@@ -282,6 +346,13 @@
     hexInput.style.width = "80px";
     hexInput.style.fontFamily = "monospace";
 
+    const eyedropBtn = xul("button");
+    eyedropBtn.setAttribute("label", "🎨");
+    eyedropBtn.setAttribute("tooltiptext", "Pick a color from anywhere on your screen");
+    eyedropBtn.style.minWidth = "0";
+    eyedropBtn.style.fontSize = "10px";
+    eyedropBtn.style.padding = "0 4px";
+
     const resetBtn = xul("button");
     resetBtn.setAttribute("label", "Reset");
     resetBtn.classList.add("zen-folder-color-wheel-reset");
@@ -289,7 +360,7 @@
     resetBtn.style.fontSize = "10px";
     resetBtn.style.padding = "0 4px";
 
-    row.append(preview, hexInput, resetBtn);
+    row.append(preview, hexInput, eyedropBtn, resetBtn);
     wrapper.append(title, canvas, valueSlider, row);
     parent.append(wrapper);
 
@@ -365,6 +436,23 @@
         sat = hsv.s;
         valueSlider.value = Math.round(hsv.v * 100);
         draw();
+      }
+    });
+
+    eyedropBtn.addEventListener("command", async () => {
+      // EyeDropper is a standard Window API — available in this
+      // privileged chrome window the same as in a content page — that
+      // lets the user sample any pixel color from ANYWHERE on screen,
+      // including outside the browser window entirely.
+      if (typeof EyeDropper === "undefined") {
+        eyedropBtn.setAttribute("tooltiptext", "Screen color picker isn't available in this browser version");
+        return;
+      }
+      try {
+        const result = await new EyeDropper().open();
+        if (result && result.sRGBHex) setHex(result.sRGBHex);
+      } catch (e) {
+        // user pressed Escape / cancelled — nothing to do
       }
     });
 

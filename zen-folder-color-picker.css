@@ -23,9 +23,21 @@
                                 independent of the fill color
      --zen-folder-stroke       Zen's OWN native variable — its
                                 zen-folders.css already binds the
-                                folder icon's SVG stroke to this,
-                                so we don't need our own rule for
-                                outline *color*, just set the var.
+                                folder icon's SVG stroke to this. Its
+                                own default value is itself a formula:
+                                  light-dark(
+                                    color-mix(in srgb, var(--zen-primary-color) 50%, black),
+                                    color-mix(in srgb, var(--zen-colors-primary) 15%, #ebebeb)
+                                  );
+                                The script preserves that same formula
+                                shape when you set a custom outline
+                                color — it substitutes your chosen hex
+                                in place of the primary-color reference
+                                on BOTH sides, so the outline still
+                                blends toward black in dark mode and
+                                toward #ebebeb in light mode instead of
+                                being a single flat color. No CSS rule
+                                needed here for the color itself.
      --zen-folder-stroke-width our own variable (Zen doesn't expose
                                 a native one) for outline thickness
 

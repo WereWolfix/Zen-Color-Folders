@@ -3,7 +3,7 @@
 Adds a **"Change Color…"** item to the right-click menu on sidebar folders in
 Zen Browser, opening a panel with three independent color wheels — **icon
 fill**, **icon outline**, and **label text** — plus a decimal-capable
-outline thickness control.
+outline thickness control and a screen-wide eyedropper on every wheel.
 
 ## How it works
 
@@ -18,16 +18,26 @@ outline thickness control.
   - an **Outline Color** wheel — recolors the folder icon's outline
   - a **Text Color** wheel — recolors the folder's label text,
     independently of the fill color
-  - each of the three has its own "Enable ___" checkbox **and its own
-    small "Reset" button** next to the hex field, which snaps just that
-    one wheel back to the folder's current native default color (read
-    live off the folder when clicked) without touching the other two
-    wheels
+  - each of the three has its own "Enable ___" checkbox, its own **🎨
+    eyedropper button** (see below), and its own small **Reset** button
+    that snaps just that one wheel back to the folder's current native
+    default color, without touching the other two wheels
   - an **Outline Thickness** control: a slider (0–8, in 0.1 steps) paired
     with a number field you can type an exact value into directly
     (including values above 8, and down to 0)
   - a **"Reset All"** button at the bottom clears every custom color for
     the folder at once (equivalent to never having customized it)
+
+### Screen-wide eyedropper
+
+Every wheel's 🎨 button opens the browser's native `EyeDropper` API, which
+lets you click **anywhere on your screen** — not just inside the panel or
+even inside the browser window — to sample a color, exactly like the
+system color picker's eyedropper tool. Whatever pixel you click becomes
+that wheel's color. Press <kbd>Esc</kbd> to cancel without picking
+anything. If your Zen version is built on a Firefox release that doesn't
+yet ship `EyeDropper`, the button just does nothing (checked via
+`typeof EyeDropper === "undefined"`) rather than throwing.
 
 ### Fill goes through Zen's own variable, not a flat override
 
@@ -42,12 +52,30 @@ roughly like:
 ```
 
 i.e. it blends a base `--zen-primary-color` with gray (dark mode) or light
-gray (light mode) to get the actual rendered icon color. An earlier version
-of this mod set its own `fill: ...` directly, which bypassed that formula
-and gave a flat, un-blended color. This version instead sets
+gray (light mode) to get the actual rendered icon color. This mod sets
 **`--zen-primary-color`** itself and lets Zen's own CSS compute the final
-blended color — so a custom color from the wheel gets the same light/dark
-adaptive treatment as Zen's built-in preset colors, not a flat override.
+blended color — so a custom fill color from the wheel gets the same
+light/dark adaptive treatment as Zen's built-in preset colors, not a flat
+override.
+
+### Outline also goes through Zen's own formula, not a flat override
+
+The outline works the same way, using Zen's own default formula for
+`--zen-folder-stroke`:
+
+```css
+--zen-folder-stroke: light-dark(
+  color-mix(in srgb, var(--zen-primary-color) 50%, black),
+  color-mix(in srgb, var(--zen-colors-primary) 15%, #ebebeb)
+);
+```
+
+i.e. Zen blends its base color toward black in dark mode, and toward a
+near-white gray (`#ebebeb`) in light mode, so the outline stays visible in
+both themes. When you enable a custom outline, the script substitutes your
+chosen color into that exact same formula shape (on both the dark- and
+light-mode branches) rather than writing a single flat color — so your
+custom outline keeps that same light/dark blending Zen's own colors get.
 
 ### First time you open a folder's picker
 
@@ -55,21 +83,22 @@ If a folder has never been customized with this mod, all three wheels open
 **enabled by default**, pre-filled with whatever Zen is *already* rendering
 for that folder:
 - Fill starts from the folder's current computed `--zen-primary-color`.
-- Outline starts from the icon's current computed stroke color — and if
-  the folder has no colored stroke to read back (the common case, since
-  most folders don't have a custom outline), it falls back to that same
-  `--zen-primary-color` rather than an arbitrary fixed color, so it starts
-  from a color that actually belongs to that folder.
+- Outline starts by reproducing the formula above (reading
+  `--zen-primary-color` / `--zen-colors-primary` and computing the same
+  color-mix blend in JS), so it matches Zen's actual default outline
+  color rather than an approximation. If that can't be computed for some
+  reason, it falls back to whatever's actually rendered on the icon, then
+  to the folder's primary color as a last resort.
 - Text starts from the label's current computed text color.
 
 The per-wheel **Reset** buttons use this exact same live lookup — clicking
-"Reset" on the Outline wheel, for example, re-reads the folder's current
-native stroke color (or its primary color, per the fallback above) and its
-current stroke width, and snaps just that wheel back to it, whether or not
-you've saved anything yet.
+"Reset" on the Outline wheel, for example, redoes that same formula-based
+calculation (and resets the stroke width to its current native value) and
+snaps just that wheel back to it, whether or not you've saved anything yet.
 
 So the picker starts by matching what you currently see, and you're
-nudging it from there rather than starting from an arbitrary placeholder.
+nudging it from there (or eyedropping an entirely different color) rather
+than starting from an arbitrary placeholder.
 
 Once you've applied a custom value for a folder, reopening the picker later
 respects exactly what you saved, including any wheel you deliberately
@@ -83,10 +112,10 @@ switched off.
     icon fill via Zen's own light/dark-aware blend formula (see above).
   - `--zen-folder-text-color` — our own variable, used by the bundled CSS
     to color the label text.
-  - `--zen-folder-stroke` — **Zen's own native variable.** Its built-in
-    `zen-folders.css` already binds the folder icon's SVG stroke to this
-    variable, so setting it is enough to recolor the icon's outline — no
-    extra CSS rule needed on our end for the color itself.
+  - `--zen-folder-stroke` — **Zen's own native variable**, set to a CSS
+    `light-dark(color-mix(...), color-mix(...))` expression built from
+    your chosen outline color, reproducing Zen's own default formula
+    shape instead of a flat override.
   - `--zen-folder-stroke-width` — our own variable (Zen doesn't expose a
     native width variable), used by the bundled CSS to set the icon's
     `stroke-width`.
@@ -119,19 +148,26 @@ file into your profile's `chrome/JS/` folder and the `.css` rules into
 
 ## Notes / things that may need tweaking
 
-- The exact formula behind `--zen-folder-behind-bgcolor` was read off your
-  browser's computed styles rather than Zen's source, so the *precise*
-  mix percentages/colors may differ slightly by Zen version — but since we
-  don't reimplement the formula ourselves (we just feed
-  `--zen-primary-color` into whatever Zen currently does with it), this
-  mod stays correct even if Zen tweaks those exact numbers later.
+- The exact formulas behind `--zen-folder-behind-bgcolor` and the default
+  `--zen-folder-stroke` were read off computed styles/devtools rather than
+  Zen's source, so the *precise* mix percentages/colors could differ
+  slightly by Zen version. If a future Zen release changes them, the fill
+  path is unaffected either way (we just feed `--zen-primary-color` into
+  whatever Zen currently does with it), while the outline formula is
+  hardcoded as a literal string in the script — update the `strokeExpr`
+  line in `applyColor()` if Zen ever changes its percentages or blend
+  colors.
 - The outline-stroke CSS selectors (`.tab-group-folder-icon svg path`,
   etc.) are a best-effort match based on Zen's folder markup and could
   need adjusting on a different Zen version — use the Browser Toolbox
   (`Ctrl+Shift+Alt+I`) to check if something doesn't pick up.
+- The eyedropper depends on the `EyeDropper` Window API being available in
+  your Zen/Firefox build. It's a standard API, but if your build predates
+  it, the button is inert rather than broken.
 - Only the folder's own icon fill/outline and label text are changed — this
   does not touch tab colors inside the folder, and it does not touch the
   label bar's background.
-- If Zen ever renames the `zenFolderActions` popup id, the `--zen-primary-color`
-  / `--zen-folder-stroke` variables, or the `zen-folder` tag, the affected
-  part of this mod simply stops having an effect rather than throwing.
+- If Zen ever renames the `zenFolderActions` popup id, the
+  `--zen-primary-color` / `--zen-colors-primary` / `--zen-folder-stroke`
+  variables, or the `zen-folder` tag, the affected part of this mod simply
+  stops having an effect rather than throwing.
