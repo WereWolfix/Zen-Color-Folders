@@ -18,10 +18,16 @@ outline thickness control.
   - an **Outline Color** wheel — recolors the folder icon's outline
   - a **Text Color** wheel — recolors the folder's label text,
     independently of the fill color
-  - each of the three has its own "Enable ___" checkbox
+  - each of the three has its own "Enable ___" checkbox **and its own
+    small "Reset" button** next to the hex field, which snaps just that
+    one wheel back to the folder's current native default color (read
+    live off the folder when clicked) without touching the other two
+    wheels
   - an **Outline Thickness** control: a slider (0–8, in 0.1 steps) paired
     with a number field you can type an exact value into directly
     (including values above 8, and down to 0)
+  - a **"Reset All"** button at the bottom clears every custom color for
+    the folder at once (equivalent to never having customized it)
 
 ### Fill goes through Zen's own variable, not a flat override
 
@@ -49,8 +55,18 @@ If a folder has never been customized with this mod, all three wheels open
 **enabled by default**, pre-filled with whatever Zen is *already* rendering
 for that folder:
 - Fill starts from the folder's current computed `--zen-primary-color`.
-- Outline starts from the icon's current computed stroke color.
+- Outline starts from the icon's current computed stroke color — and if
+  the folder has no colored stroke to read back (the common case, since
+  most folders don't have a custom outline), it falls back to that same
+  `--zen-primary-color` rather than an arbitrary fixed color, so it starts
+  from a color that actually belongs to that folder.
 - Text starts from the label's current computed text color.
+
+The per-wheel **Reset** buttons use this exact same live lookup — clicking
+"Reset" on the Outline wheel, for example, re-reads the folder's current
+native stroke color (or its primary color, per the fallback above) and its
+current stroke width, and snaps just that wheel back to it, whether or not
+you've saved anything yet.
 
 So the picker starts by matching what you currently see, and you're
 nudging it from there rather than starting from an arbitrary placeholder.

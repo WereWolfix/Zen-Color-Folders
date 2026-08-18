@@ -138,12 +138,20 @@
 
   function computedStrokeHex(folder, fallback) {
     const el = iconShapeEl(folder);
-    if (!el) return fallback;
-    try {
-      return rgbStringToHex(getComputedStyle(el).stroke) || fallback;
-    } catch (e) {
-      return fallback;
+    if (el) {
+      try {
+        const hex = rgbStringToHex(getComputedStyle(el).stroke);
+        if (hex) return hex;
+      } catch (e) {
+        /* fall through */
+      }
     }
+    // A folder with no custom outline typically has no colored stroke to
+    // read back (e.g. computed "stroke" comes back as "none"). In that
+    // case, match it to the folder's own primary color — the same base
+    // color Zen already uses for that folder's fill — rather than an
+    // arbitrary fixed guess.
+    return computedPrimaryColorHex(folder, fallback);
   }
 
   function computedStrokeWidth(folder, fallback) {
@@ -228,8 +236,11 @@
   // Reusable color wheel widget
   // ---------------------------------------------------------------------
 
-  // Builds one wheel + value slider + hex field inside `parent`, labeled
-  // with `label`. Returns { getHex, setHex, root }.
+  // Builds one wheel + value slider + hex field + a "Reset" button inside
+  // `parent`, labeled with `label`. Returns { getHex, setHex, root, onReset }
+  // — the caller assigns `onReset` to a function that restores this
+  // wheel's "default" value (varies per property/folder), and the
+  // button's command handler invokes whatever was assigned.
   function buildWheelWidget(parent, label) {
     const wrapper = xul("vbox");
     wrapper.style.gap = "4px";
@@ -271,7 +282,14 @@
     hexInput.style.width = "80px";
     hexInput.style.fontFamily = "monospace";
 
-    row.append(preview, hexInput);
+    const resetBtn = xul("button");
+    resetBtn.setAttribute("label", "Reset");
+    resetBtn.classList.add("zen-folder-color-wheel-reset");
+    resetBtn.style.minWidth = "0";
+    resetBtn.style.fontSize = "10px";
+    resetBtn.style.padding = "0 4px";
+
+    row.append(preview, hexInput, resetBtn);
     wrapper.append(title, canvas, valueSlider, row);
     parent.append(wrapper);
 
@@ -366,7 +384,16 @@
       return HEX_RE.test(v) ? v : null;
     }
 
-    return { getHex, setHex, root: wrapper };
+    // widgetApi.onReset is assigned by the caller (buildPanel), since the
+    // "default" color to reset to depends on which folder/property this
+    // particular wheel represents. The button just invokes whatever was
+    // assigned.
+    const widgetApi = { getHex, setHex, root: wrapper, onReset: null };
+    resetBtn.addEventListener("command", () => {
+      if (widgetApi.onReset) widgetApi.onReset();
+    });
+
+    return widgetApi;
   }
 
   // ---------------------------------------------------------------------
@@ -395,6 +422,25 @@
     fillWidget = buildWheelWidget(wheelsRow, "Fill Color");
     outlineWidget = buildWheelWidget(wheelsRow, "Outline Color");
     textWidget = buildWheelWidget(wheelsRow, "Text Color");
+
+    // Each wheel's Reset restores THAT property's default — read live
+    // off the folder at click time — without touching the other two
+    // wheels or the enable checkboxes.
+    fillWidget.onReset = () => {
+      if (!activeFolder) return;
+      fillWidget.setHex(computedPrimaryColorHex(activeFolder, "#8a8fff"));
+    };
+    outlineWidget.onReset = () => {
+      if (!activeFolder) return;
+      outlineWidget.setHex(computedStrokeHex(activeFolder, "#2a2f6d"));
+      const w = computedStrokeWidth(activeFolder, 2);
+      widthSlider.value = String(Math.min(Math.max(w, 0), 8));
+      widthNumber.value = String(w);
+    };
+    textWidget.onReset = () => {
+      if (!activeFolder) return;
+      textWidget.setHex(computedTextHex(activeFolder, "#ffffff"));
+    };
 
     container.append(wheelsRow);
 
@@ -491,7 +537,8 @@
     applyBtn.addEventListener("command", commitColor);
 
     const resetBtn = xul("button");
-    resetBtn.setAttribute("label", "Reset");
+    resetBtn.setAttribute("label", "Reset All");
+    resetBtn.setAttribute("tooltiptext", "Clear all custom colors for this folder");
     resetBtn.addEventListener("command", resetColor);
 
     const cancelBtn = xul("button");
