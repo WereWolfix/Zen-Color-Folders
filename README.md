@@ -17,3 +17,6 @@ Zen and other Firefox-based browsers.
 2. In Zen, open Sine's settings page
 3. Copy the Repo and install it
 4. Sine will install the script and restart the browser UI.
+
+<img width="1920" height="1080" alt="Sequence 02_2" src="https://github.com/user-attachments/assets/e99b2f5d-0868-425b-be21-4260201e7fcb" />
+
