@@ -246,197 +246,28 @@
   // Click-to-sample eyedropper
   // ---------------------------------------------------------------------
 
-  // Lets you click any pixel ANYWHERE on screen — including other
-  // applications, not just the browser — and get its color back, with a
-  // live magnifier + preview that follows your cursor before you click.
+  // Lets you click any pixel within the current browser window (its own
+  // UI plus any page content rendered inside it) and get its color back,
+  // with a live magnifier that follows your cursor — showing both an
+  // actual color swatch AND the hex code — before you click.
   //
   // The standard Web `EyeDropper` API isn't exposed to chrome-privileged
-  // windows like browser.xhtml, and `drawWindow()` (used by an earlier
-  // version of this mod) can only rasterize the browser's OWN window, not
-  // the rest of your desktop. To actually reach the whole screen, this
-  // uses Firefox's screen-sharing capture path — the same underlying
-  // mechanism as "Share Screen" — via
-  // `getUserMedia({video: {mediaSource: "screen"}})`. That will prompt
-  // Firefox's native "choose what to share" dialog once per pick; choose
-  // "Entire Screen". The captured video is drawn full-screen in a
-  // temporary borderless overlay window so you can click any pixel on
-  // it, including ones that belong to other applications.
+  // windows like browser.xhtml, so this uses `drawWindow()` — a method
+  // only available to privileged/chrome JS — to rasterize the current
+  // browser window into an offscreen canvas, overlays a transparent
+  // full-window click-catcher, and reads back the exact pixel color
+  // under wherever the cursor is.
   //
   // `onPreview(hexOrNull)` is called continuously as the cursor moves
   // (and with null on cancel) so the caller can live-update its own
   // wheel/preview UI before the user commits to a pixel by clicking.
   //
   // Resolves to a hex string on click, or null if cancelled/unsupported.
-  // Falls back to the previous browser-window-only method if the screen
-  // capture prompt fails, is denied, or isn't available.
-  async function pickColorFromScreen(onPreview) {
-    const viaScreenCapture = await pickColorViaScreenCapture(onPreview);
-    if (viaScreenCapture !== undefined) return viaScreenCapture;
-    return pickColorFromBrowserWindow(onPreview);
-  }
-
-  // Returns a hex string, null (user cancelled), or undefined (capture
-  // itself failed/unavailable — caller should fall back to something
-  // else rather than treating this as an intentional cancel).
-  function pickColorViaScreenCapture(onPreview) {
-    return new Promise(async (resolve) => {
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { mediaSource: "screen" },
-        });
-      } catch (e) {
-        resolve(undefined);
-        return;
-      }
-
-      let overlayWin;
-      let raf;
-
-      function cleanup(result) {
-        if (raf && overlayWin) {
-          try {
-            overlayWin.cancelAnimationFrame(raf);
-          } catch (e) {
-            /* ignore */
-          }
-        }
-        try {
-          stream.getTracks().forEach((t) => t.stop());
-        } catch (e) {
-          /* ignore */
-        }
-        try {
-          if (overlayWin && !overlayWin.closed) overlayWin.close();
-        } catch (e) {
-          /* ignore */
-        }
-        if (onPreview) onPreview(null);
-        resolve(result);
-      }
-
-      try {
-        const video = html("video");
-        video.srcObject = stream;
-        video.muted = true;
-        await video.play().catch(() => {});
-        if (!video.videoWidth) {
-          await new Promise((res) => {
-            video.addEventListener("loadedmetadata", res, { once: true });
-          });
-        }
-
-        const screenW = window.screen.width;
-        const screenH = window.screen.height;
-        const features =
-          "chrome,titlebar=no,toolbar=no,location=no,directories=no,status=no," +
-          `menubar=no,scrollbars=no,resizable=no,left=0,top=0,width=${screenW},height=${screenH}`;
-        overlayWin = Services.ww.openWindow(null, "about:blank", "_blank", features, null);
-        if (!overlayWin) {
-          cleanup(undefined);
-          return;
-        }
-        await new Promise((res) => {
-          if (overlayWin.document.readyState === "complete") res();
-          else overlayWin.addEventListener("load", res, { once: true });
-        });
-        overlayWin.focus();
-
-        const odoc = overlayWin.document;
-        odoc.documentElement.style.margin = "0";
-        odoc.documentElement.style.overflow = "hidden";
-        odoc.body.style.margin = "0";
-        odoc.body.style.cursor = "crosshair";
-        odoc.body.style.background = "black";
-
-        const canvas = odoc.createElementNS(HTML_NS, "canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.style.width = "100%";
-        canvas.style.height = "100%";
-        canvas.style.display = "block";
-        odoc.body.appendChild(canvas);
-        const ctx = canvas.getContext("2d");
-
-        const magnifier = odoc.createElementNS(HTML_NS, "div");
-        magnifier.style.position = "fixed";
-        magnifier.style.pointerEvents = "none";
-        magnifier.style.padding = "4px 8px";
-        magnifier.style.borderRadius = "4px";
-        magnifier.style.font = "12px monospace";
-        magnifier.style.color = "#fff";
-        magnifier.style.textShadow = "0 1px 2px rgba(0,0,0,0.8)";
-        magnifier.style.background = "rgba(0,0,0,0.35)";
-        magnifier.style.border = "2px solid rgba(255,255,255,0.9)";
-        magnifier.style.zIndex = "2147483647";
-        odoc.body.appendChild(magnifier);
-
-        function drawFrame() {
-          try {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          } catch (e) {
-            /* ignore transient decode errors */
-          }
-          raf = overlayWin.requestAnimationFrame(drawFrame);
-        }
-        drawFrame();
-
-        function pixelAt(clientX, clientY) {
-          const rect = canvas.getBoundingClientRect();
-          const scaleX = canvas.width / rect.width;
-          const scaleY = canvas.height / rect.height;
-          const x = Math.max(0, Math.min(canvas.width - 1, Math.round((clientX - rect.left) * scaleX)));
-          const y = Math.max(0, Math.min(canvas.height - 1, Math.round((clientY - rect.top) * scaleY)));
-          const data = ctx.getImageData(x, y, 1, 1).data;
-          return rgbArrToHex([data[0], data[1], data[2]]);
-        }
-
-        function onMove(e) {
-          let hex = null;
-          try {
-            hex = pixelAt(e.clientX, e.clientY);
-          } catch (err) {
-            hex = null;
-          }
-          magnifier.style.left = `${e.clientX + 18}px`;
-          magnifier.style.top = `${e.clientY + 18}px`;
-          if (hex) {
-            magnifier.style.background = hex;
-            magnifier.textContent = hex;
-            if (onPreview) onPreview(hex);
-          }
-        }
-
-        function onClick(e) {
-          e.preventDefault();
-          let hex = null;
-          try {
-            hex = pixelAt(e.clientX, e.clientY);
-          } catch (err) {
-            hex = null;
-          }
-          cleanup(hex);
-        }
-
-        function onKey(e) {
-          if (e.key === "Escape") cleanup(null);
-        }
-
-        odoc.addEventListener("mousemove", onMove);
-        odoc.addEventListener("click", onClick, { once: true });
-        odoc.addEventListener("keydown", onKey);
-        overlayWin.addEventListener("beforeunload", () => cleanup(null), { once: true });
-      } catch (e) {
-        cleanup(undefined);
-      }
-    });
-  }
-
-  // Fallback used when full-screen capture isn't available: samples
-  // pixels within the current browser window only (its own UI plus any
-  // page content rendered in it), via the chrome-only `drawWindow()`
-  // method.
-  function pickColorFromBrowserWindow(onPreview) {
+  //
+  // Scope: this can only see pixels within the current browser window —
+  // it can't reach outside the browser process to your OS desktop or
+  // other applications.
+  function pickColorFromScreen(onPreview) {
     return new Promise((resolve) => {
       let canvas, ctx;
       try {
@@ -462,8 +293,36 @@
       overlay.style.cursor = "crosshair";
       overlay.style.background = "transparent";
 
+      // Magnifier tooltip that follows the cursor: a small color swatch
+      // box plus the hex code next to it, on a dark pill background so
+      // the text stays readable regardless of the sampled color.
+      const magnifier = html("div");
+      magnifier.style.position = "fixed";
+      magnifier.style.pointerEvents = "none";
+      magnifier.style.display = "flex";
+      magnifier.style.alignItems = "center";
+      magnifier.style.gap = "6px";
+      magnifier.style.padding = "4px 8px";
+      magnifier.style.borderRadius = "4px";
+      magnifier.style.background = "rgba(0,0,0,0.75)";
+      magnifier.style.zIndex = "2147483647";
+
+      const swatch = html("div");
+      swatch.style.width = "14px";
+      swatch.style.height = "14px";
+      swatch.style.borderRadius = "3px";
+      swatch.style.border = "1px solid rgba(255,255,255,0.8)";
+      swatch.style.flexShrink = "0";
+
+      const hexLabel = html("span");
+      hexLabel.style.font = "12px monospace";
+      hexLabel.style.color = "#fff";
+
+      magnifier.append(swatch, hexLabel);
+
       function cleanup() {
         overlay.remove();
+        magnifier.remove();
         window.removeEventListener("keydown", onKey, true);
         if (onPreview) onPreview(null);
       }
@@ -482,7 +341,13 @@
         } catch (err) {
           hex = null;
         }
-        if (hex && onPreview) onPreview(hex);
+        magnifier.style.left = `${e.clientX + 16}px`;
+        magnifier.style.top = `${e.clientY + 16}px`;
+        if (hex) {
+          swatch.style.background = hex;
+          hexLabel.textContent = hex;
+          if (onPreview) onPreview(hex);
+        }
       }
 
       function onClick(e) {
@@ -509,6 +374,7 @@
       overlay.addEventListener("click", onClick, { once: true, capture: true });
       window.addEventListener("keydown", onKey, true);
       document.documentElement.appendChild(overlay);
+      document.documentElement.appendChild(magnifier);
     });
   }
 
@@ -564,7 +430,7 @@
 
     const eyedropBtn = xul("button");
     eyedropBtn.setAttribute("label", "🎨");
-    eyedropBtn.setAttribute("tooltiptext", "Pick a color from anywhere on your screen");
+    eyedropBtn.setAttribute("tooltiptext", "Pick a color from anywhere in the browser window");
     eyedropBtn.style.minWidth = "0";
     eyedropBtn.style.fontSize = "10px";
     eyedropBtn.style.padding = "0 4px";
