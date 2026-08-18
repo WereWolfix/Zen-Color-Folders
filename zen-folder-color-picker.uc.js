@@ -140,57 +140,12 @@
     return computedVarHex(folder, "--zen-primary-color", fallback);
   }
 
-  function hexToRgbArr(hex) {
-    if (!HEX_RE.test(hex)) return null;
-    return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-  }
-
   function rgbArrToHex(arr) {
     const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
     return `#${toHex(arr[0])}${toHex(arr[1])}${toHex(arr[2])}`;
   }
 
-  // Approximates CSS color-mix(in srgb, <hex> percent%, <otherRgbArr>) —
-  // a plain per-channel linear blend, which is what color-mix does for
-  // the srgb color space.
-  function mixHex(hex, percent, otherRgbArr) {
-    const rgb = hexToRgbArr(hex);
-    if (!rgb) return null;
-    const p = percent / 100;
-    const mixed = rgb.map((v, i) => v * p + otherRgbArr[i] * (1 - p));
-    return rgbArrToHex(mixed);
-  }
-
-  function isDarkMode() {
-    try {
-      return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    } catch (e) {
-      return true;
-    }
-  }
-
-  // Reproduces Zen's own default formula for --zen-folder-stroke:
-  //   light-dark(
-  //     color-mix(in srgb, var(--zen-primary-color) 50%, black),
-  //     color-mix(in srgb, var(--zen-colors-primary) 15%, #ebebeb)
-  //   )
-  // so the outline wheel's starting color actually matches what Zen
-  // would show by default, instead of an approximation.
-  function computedDefaultStrokeHex(folder, fallback) {
-    const dark = isDarkMode();
-    const varName = dark ? "--zen-primary-color" : "--zen-colors-primary";
-    const base = computedVarHex(folder, varName, null) || computedPrimaryColorHex(folder, null);
-    if (!base) return fallback;
-    const mixed = dark ? mixHex(base, 50, [0, 0, 0]) : mixHex(base, 15, [235, 235, 235]);
-    return mixed || fallback;
-  }
-
   function computedStrokeHex(folder, fallback) {
-    // Prefer reproducing Zen's actual default-stroke formula...
-    const formulaHex = computedDefaultStrokeHex(folder, null);
-    if (formulaHex) return formulaHex;
-    // ...fall back to whatever's actually rendered on the icon (covers
-    // folders that already have some other explicit stroke)...
     const el = iconShapeEl(folder);
     if (el) {
       try {
@@ -200,7 +155,11 @@
         /* fall through */
       }
     }
-    // ...and as a last resort, the folder's primary color.
+    // A folder with no custom outline typically has no colored stroke to
+    // read back (e.g. computed "stroke" comes back as "none"). In that
+    // case, match it to the folder's own primary color — the same base
+    // color Zen already uses for that folder's fill — rather than an
+    // arbitrary fixed guess.
     return computedPrimaryColorHex(folder, fallback);
   }
 
@@ -257,23 +216,10 @@
 
     if (outline) {
       // --zen-folder-stroke is Zen's own native variable that its
-      // zen-folders.css already binds to the folder icon's SVG stroke.
-      // Its own DEFAULT value is itself a formula:
-      //   light-dark(
-      //     color-mix(in srgb, var(--zen-primary-color) 50%, black),
-      //     color-mix(in srgb, var(--zen-colors-primary) 15%, #ebebeb)
-      //   )
-      // i.e. Zen blends a base color with black (dark mode) or a near-
-      // white gray (light mode) so the outline stays visible in both
-      // themes. Rather than overwrite that with a flat hex (losing the
-      // light/dark adaptation, same mistake the fill override made
-      // earlier), we reuse the exact same formula with our chosen color
-      // standing in for the primary-color variable, so the outline keeps
-      // that same light/dark blending behavior.
-      const strokeExpr =
-        `light-dark(color-mix(in srgb, ${outline} 50%, black), ` +
-        `color-mix(in srgb, ${outline} 15%, #ebebeb))`;
-      folder.style.setProperty("--zen-folder-stroke", strokeExpr);
+      // zen-folders.css already binds to the folder icon's SVG stroke —
+      // setting it directly to the chosen color is enough to recolor
+      // the icon outline, no extra CSS needed on our end.
+      folder.style.setProperty("--zen-folder-stroke", outline);
       // --zen-folder-stroke-width is our own variable (Zen doesn't
       // expose one), applied via our stylesheet.
       folder.style.setProperty("--zen-folder-stroke-width", `${width}px`);
@@ -293,6 +239,84 @@
     const colors = loadColors();
     root.querySelectorAll("zen-folder").forEach((folder) => {
       if (folder.id && colors[folder.id]) applyColor(folder, colors[folder.id]);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Click-to-sample eyedropper
+  // ---------------------------------------------------------------------
+
+  // Genuinely lets you click any pixel on screen and get its color back.
+  // The standard Web `EyeDropper` API isn't exposed to chrome-privileged
+  // windows like browser.xhtml (only to content pages), so instead this
+  // rasterizes the current browser window into an offscreen canvas via
+  // the chrome-only `drawWindow()` method, overlays a transparent
+  // full-window click-catcher, and reads back the pixel under wherever
+  // you click. Escape cancels. Resolves to a hex string, or null if
+  // cancelled/unsupported.
+  //
+  // Caveat: this can only see pixels within the current browser window
+  // (its own chrome UI plus whatever page content is rendered in it) —
+  // it can't reach outside the browser process to your OS desktop or
+  // other applications, since that's outside what chrome-privileged
+  // browser JS is allowed to do.
+  function pickColorFromScreen() {
+    return new Promise((resolve) => {
+      let canvas, ctx;
+      try {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        canvas = html("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        ctx = canvas.getContext("2d");
+        ctx.drawWindow(window, 0, 0, w, h, "rgb(255,255,255)");
+      } catch (e) {
+        resolve(null);
+        return;
+      }
+
+      const overlay = html("div");
+      overlay.style.position = "fixed";
+      overlay.style.top = "0";
+      overlay.style.left = "0";
+      overlay.style.width = "100%";
+      overlay.style.height = "100%";
+      overlay.style.zIndex = "2147483647";
+      overlay.style.cursor = "crosshair";
+      overlay.style.background = "transparent";
+
+      function cleanup() {
+        overlay.remove();
+        window.removeEventListener("keydown", onKey, true);
+      }
+
+      function onClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        let hex = null;
+        try {
+          const x = Math.max(0, Math.min(canvas.width - 1, Math.round(e.clientX)));
+          const y = Math.max(0, Math.min(canvas.height - 1, Math.round(e.clientY)));
+          const data = ctx.getImageData(x, y, 1, 1).data;
+          hex = rgbArrToHex([data[0], data[1], data[2]]);
+        } catch (err) {
+          hex = null;
+        }
+        cleanup();
+        resolve(hex);
+      }
+
+      function onKey(e) {
+        if (e.key === "Escape") {
+          cleanup();
+          resolve(null);
+        }
+      }
+
+      overlay.addEventListener("click", onClick, { once: true, capture: true });
+      window.addEventListener("keydown", onKey, true);
+      document.documentElement.appendChild(overlay);
     });
   }
 
@@ -348,27 +372,10 @@
 
     const eyedropBtn = xul("button");
     eyedropBtn.setAttribute("label", "🎨");
-    eyedropBtn.setAttribute("tooltiptext", "Pick a color from anywhere on your screen");
+    eyedropBtn.setAttribute("tooltiptext", "Pick a color from anywhere on the browser window");
     eyedropBtn.style.minWidth = "0";
     eyedropBtn.style.fontSize = "10px";
     eyedropBtn.style.padding = "0 4px";
-
-    // Firefox generally doesn't expose the Web EyeDropper API to chrome-
-    // privileged windows (browser.xhtml), only to content pages — so we
-    // can't rely on `new EyeDropper()` here even on an up-to-date build.
-    // A hidden native <input type="color"> gives us a reliable path to
-    // the SAME underlying OS color-picker dialog Firefox itself uses,
-    // and on Windows/macOS/Linux that dialog has its own built-in
-    // eyedropper/loupe tool that can sample any pixel on the whole
-    // screen — same end result, just triggered through a mechanism that
-    // actually works in this context.
-    const nativeColorInput = html("input");
-    nativeColorInput.type = "color";
-    nativeColorInput.style.position = "absolute";
-    nativeColorInput.style.width = "0";
-    nativeColorInput.style.height = "0";
-    nativeColorInput.style.opacity = "0";
-    nativeColorInput.style.pointerEvents = "none";
 
     const resetBtn = xul("button");
     resetBtn.setAttribute("label", "Reset");
@@ -377,7 +384,7 @@
     resetBtn.style.fontSize = "10px";
     resetBtn.style.padding = "0 4px";
 
-    row.append(preview, hexInput, eyedropBtn, resetBtn, nativeColorInput);
+    row.append(preview, hexInput, eyedropBtn, resetBtn);
     wrapper.append(title, canvas, valueSlider, row);
     parent.append(wrapper);
 
@@ -456,29 +463,15 @@
       }
     });
 
-    nativeColorInput.addEventListener("input", () => {
-      if (HEX_RE.test(nativeColorInput.value)) setHex(nativeColorInput.value);
-    });
-
     eyedropBtn.addEventListener("command", async () => {
-      // Try the standard Web EyeDropper API first, in case a future
-      // Zen/Firefox build does expose it to chrome windows...
-      if (typeof EyeDropper !== "undefined") {
-        try {
-          const result = await new EyeDropper().open();
-          if (result && result.sRGBHex) setHex(result.sRGBHex);
-          return;
-        } catch (e) {
-          // user pressed Escape / cancelled the EyeDropper — nothing to do
-          return;
-        }
-      }
-      // ...otherwise fall back to the native OS color-picker dialog via a
-      // hidden <input type="color">. On Windows/macOS/Linux, that dialog
-      // has its own eyedropper/loupe tool that can sample any pixel
-      // anywhere on your screen, same as the Web API would have.
-      nativeColorInput.value = getHex() || "#8a8fff";
-      nativeColorInput.click();
+      // The panel would otherwise sit on top of (and block clicks to)
+      // whatever's behind it, so hide it while sampling, then reopen it
+      // anchored back where it was once a color's been picked.
+      const anchor = panel.anchorNode;
+      panel.hidePopup();
+      const hex = await pickColorFromScreen();
+      panel.openPopup(anchor || undefined, "bottomcenter topleft", 0, 4, false, false);
+      if (hex) setHex(hex);
     });
 
     function setHex(hex) {
