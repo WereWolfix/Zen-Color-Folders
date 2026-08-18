@@ -297,7 +297,9 @@
   // Panel: fill wheel + outline wheel + thickness slider + buttons
   // ---------------------------------------------------------------------
 
-  let panel, fillWidget, outlineWidget, widthSlider, widthLabel, outlineEnabledCheckbox;
+  let panel, fillWidget, outlineWidget;
+  let widthSlider, widthNumber, widthLabel;
+  let fillEnabledCheckbox, outlineEnabledCheckbox;
   let activeFolder = null;
 
   function buildPanel() {
@@ -319,11 +321,19 @@
 
     container.append(wheelsRow);
 
-    // Outline enable toggle
-    const outlineRow = xul("hbox");
-    outlineRow.style.alignItems = "center";
-    outlineRow.style.gap = "6px";
-    outlineRow.style.marginTop = "4px";
+    // Enable toggles (fill + outline), side by side
+    const togglesRow = xul("hbox");
+    togglesRow.style.alignItems = "center";
+    togglesRow.style.gap = "16px";
+    togglesRow.style.marginTop = "4px";
+
+    fillEnabledCheckbox = xul("checkbox");
+    fillEnabledCheckbox.setAttribute("label", "Enable fill");
+    fillEnabledCheckbox.addEventListener("command", () => {
+      const enabled = fillEnabledCheckbox.checked;
+      fillWidget.root.style.opacity = enabled ? "1" : "0.4";
+      fillWidget.root.style.pointerEvents = enabled ? "auto" : "none";
+    });
 
     outlineEnabledCheckbox = xul("checkbox");
     outlineEnabledCheckbox.setAttribute("label", "Enable outline");
@@ -332,11 +342,13 @@
       outlineWidget.root.style.opacity = enabled ? "1" : "0.4";
       outlineWidget.root.style.pointerEvents = enabled ? "auto" : "none";
       widthSlider.disabled = !enabled;
+      widthNumber.disabled = !enabled;
     });
-    outlineRow.append(outlineEnabledCheckbox);
-    container.append(outlineRow);
 
-    // Thickness slider
+    togglesRow.append(fillEnabledCheckbox, outlineEnabledCheckbox);
+    container.append(togglesRow);
+
+    // Thickness: slider (decimals, down to 0) + a typeable number field
     const widthRow = xul("vbox");
     widthRow.style.gap = "2px";
     widthRow.style.marginTop = "4px";
@@ -344,19 +356,44 @@
     widthLabel = html("div");
     widthLabel.style.fontSize = "11px";
     widthLabel.style.opacity = "0.75";
-    widthLabel.textContent = "Outline Thickness: 2px";
+    widthLabel.textContent = "Outline Thickness";
+
+    const widthControls = xul("hbox");
+    widthControls.style.alignItems = "center";
+    widthControls.style.gap = "8px";
 
     widthSlider = html("input");
     widthSlider.type = "range";
-    widthSlider.min = "1";
+    widthSlider.min = "0";
     widthSlider.max = "8";
+    widthSlider.step = "0.1";
     widthSlider.value = "2";
-    widthSlider.style.width = "296px";
+    widthSlider.style.width = "230px";
+
+    widthNumber = html("input");
+    widthNumber.type = "number";
+    widthNumber.min = "0";
+    widthNumber.max = "20";
+    widthNumber.step = "0.1";
+    widthNumber.value = "2";
+    widthNumber.style.width = "58px";
+
     widthSlider.addEventListener("input", () => {
-      widthLabel.textContent = `Outline Thickness: ${widthSlider.value}px`;
+      widthNumber.value = widthSlider.value;
+    });
+    widthNumber.addEventListener("input", () => {
+      const v = parseFloat(widthNumber.value);
+      if (!Number.isNaN(v)) {
+        // keep the slider in sync when the typed value is within its range;
+        // values above the slider's max still work, they just won't move it
+        if (v >= parseFloat(widthSlider.min) && v <= parseFloat(widthSlider.max)) {
+          widthSlider.value = String(v);
+        }
+      }
     });
 
-    widthRow.append(widthLabel, widthSlider);
+    widthControls.append(widthSlider, widthNumber);
+    widthRow.append(widthLabel, widthControls);
     container.append(widthRow);
 
     // Buttons
@@ -383,12 +420,22 @@
     (document.getElementById("mainPopupSet") || document.documentElement).appendChild(panel);
   }
 
+  function currentWidth() {
+    // number field is the source of truth (it accepts values the slider
+    // can't reach, e.g. above its max), fall back to the slider
+    const n = parseFloat(widthNumber.value);
+    if (!Number.isNaN(n)) return Math.max(0, n);
+    const s = parseFloat(widthSlider.value);
+    return Number.isNaN(s) ? 2 : s;
+  }
+
   function commitColor() {
     if (!activeFolder) return;
-    const fill = fillWidget.getHex();
+    const fillOn = fillEnabledCheckbox.checked;
+    const fill = fillOn ? fillWidget.getHex() : null;
     const outlineOn = outlineEnabledCheckbox.checked;
     const outline = outlineOn ? outlineWidget.getHex() : null;
-    const width = parseInt(widthSlider.value, 10);
+    const width = currentWidth();
 
     const id = ensureFolderId(activeFolder);
     const colors = loadColors();
@@ -418,14 +465,21 @@
     fillWidget.setHex(entry.fill || "#8a8fff");
     outlineWidget.setHex(entry.outline || "#2a2f6d");
 
+    const hasFill = !!entry.fill;
+    fillEnabledCheckbox.checked = hasFill;
+    fillWidget.root.style.opacity = hasFill ? "1" : "0.4";
+    fillWidget.root.style.pointerEvents = hasFill ? "auto" : "none";
+
     const hasOutline = !!entry.outline;
     outlineEnabledCheckbox.checked = hasOutline;
     outlineWidget.root.style.opacity = hasOutline ? "1" : "0.4";
     outlineWidget.root.style.pointerEvents = hasOutline ? "auto" : "none";
 
-    widthSlider.value = String(entry.width || 2);
+    const width = typeof entry.width === "number" ? entry.width : 2;
+    widthSlider.value = String(Math.min(Math.max(width, 0), 8));
+    widthNumber.value = String(width);
     widthSlider.disabled = !hasOutline;
-    widthLabel.textContent = `Outline Thickness: ${entry.width || 2}px`;
+    widthNumber.disabled = !hasOutline;
 
     panel.openPopup(anchor || folder, "bottomcenter topleft", 0, 4, false, false);
   }

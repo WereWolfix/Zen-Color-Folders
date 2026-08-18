@@ -15,11 +15,13 @@ outline **thickness**.
   "Change Color…" menu item if one isn't already there.
 - Clicking it opens a panel with:
   - a **Fill Color** wheel (hue + saturation by position, brightness
-    slider, editable hex field)
+    slider, editable hex field), gated behind an "Enable fill" checkbox
   - an **Outline Color** wheel, same controls, gated behind an "Enable
     outline" checkbox
-  - an **Outline Thickness** slider (1–8px), enabled only when the outline
-    is on
+  - an **Outline Thickness** control: a slider (0–8, in 0.1 steps) paired
+    with a number field you can type an exact value into directly
+    (including values above 8, and down to 0 to effectively hide the
+    outline without unchecking it)
 - The chosen values are stored in the hidden preference
   `extensions.zenfoldercolor.colors` as
   `{ "<folder id>": { "fill": "#rrggbb", "outline": "#rrggbb"|null, "width": n } }`,
