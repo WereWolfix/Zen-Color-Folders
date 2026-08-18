@@ -122,11 +122,16 @@
     }
 
     if (outline) {
-      folder.style.setProperty("--zen-folder-outline-color", outline);
-      folder.style.setProperty("--zen-folder-outline-width", `${width}px`);
+      // --zen-folder-stroke is Zen's own native variable that its
+      // zen-folders.css already binds to the folder icon's SVG stroke —
+      // setting it here is enough to recolor the icon outline, no extra
+      // CSS needed on our end. --zen-folder-stroke-width is our own
+      // variable (Zen doesn't expose one), applied via our stylesheet.
+      folder.style.setProperty("--zen-folder-stroke", outline);
+      folder.style.setProperty("--zen-folder-stroke-width", `${width}px`);
     } else {
-      folder.style.removeProperty("--zen-folder-outline-color");
-      folder.style.removeProperty("--zen-folder-outline-width");
+      folder.style.removeProperty("--zen-folder-stroke");
+      folder.style.removeProperty("--zen-folder-stroke-width");
     }
 
     if (fill || outline) {

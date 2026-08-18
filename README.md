@@ -24,11 +24,15 @@ outline **thickness**.
   `extensions.zenfoldercolor.colors` as
   `{ "<folder id>": { "fill": "#rrggbb", "outline": "#rrggbb"|null, "width": n } }`,
   and applied as CSS custom properties directly on the folder element:
-  - `--zen-folder-color` / `--zen-folder-color-contrast` (fill)
-  - `--zen-folder-outline-color` / `--zen-folder-outline-width` (outline)
-
-  The bundled `.css` file uses those variables to tint the label/icon fill
-  and draw the outline as a border (plus an SVG stroke on the icon).
+  - `--zen-folder-color` / `--zen-folder-color-contrast` — our own
+    variables, used by the bundled CSS to tint the label and icon fill.
+  - `--zen-folder-stroke` — **Zen's own native variable.** Its built-in
+    `zen-folders.css` already binds the folder icon's SVG stroke to this
+    variable, so setting it is enough to recolor the icon's outline — no
+    extra CSS rule needed on our end for the color itself.
+  - `--zen-folder-stroke-width` — our own variable (Zen doesn't expose a
+    native width variable), used by the bundled CSS to set the icon's
+    `stroke-width`.
 - Colors are re-applied on browser start, session restore, and whenever new
   folders appear in the sidebar, so they persist across restarts as long as
   Zen keeps assigning the same folder its native id (which it does — that id
@@ -63,12 +67,7 @@ file into your profile's `chrome/JS/` folder and the `.css` rules into
   pick up the fill or outline after installing, right-click the folder icon
   → Inspect (via the Browser Toolbox, `Ctrl+Shift+Alt+I`) and adjust the
   selectors in `zen-folder-color-picker.css` to match what you see.
-- The outline is drawn as a CSS `border` on the label container, plus an
-  optional `stroke` on the icon's SVG shapes. If your icon's paths don't
-  have visible strokable outlines (common with filled-only icon sets),
-  you'll mostly see the border around the label — that's expected; delete
-  the icon-stroke block in the CSS if you'd rather it not attempt that at
-  all.
+
 - Only the folder label/icon color and outline are changed — this does not
   touch tab colors inside the folder.
 - If Zen ever renames the `zenFolderActions` popup id or the `zen-folder`
