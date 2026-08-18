@@ -1,10 +1,13 @@
 /* Applies the custom colors chosen via the color wheels to a folder's
-   label text, icon fill, and icon outline (stroke).
+   icon fill, icon outline (stroke), and label text — nothing else. In
+   particular this deliberately does NOT touch the label bar's background,
+   only the folder icon itself and its own text.
 
    The script sets these custom properties inline on the <zen-folder>
    element when applicable:
-     --zen-folder-color            fill color (icon + label accent)
-     --zen-folder-color-contrast   readable text color for the fill
+     --zen-folder-color            icon fill color (our own variable)
+     --zen-folder-text-color       label text color (our own variable,
+                                    independent of the fill color)
      --zen-folder-stroke           Zen's OWN native variable — its
                                     zen-folders.css already binds the
                                     folder icon's SVG stroke to this,
@@ -15,29 +18,21 @@
 
    and toggles zen-custom-colored="true" when at least one is set. */
 
-/* ---- Fill ---- */
+/* ---- Text ---- */
 
 zen-folder[zen-custom-colored="true"] .tab-group-label-container,
 zen-folder[zen-custom-colored="true"] .tab-group-label {
-  color: var(--zen-folder-color-contrast, inherit) !important;
+  color: var(--zen-folder-text-color, inherit) !important;
 }
 
-/* Folder icon fill. If your Zen version renders the folder icon
-   differently, use the Browser Toolbox (Ctrl+Shift+Alt+I) to inspect a
-   folder and adjust these selectors to match. */
+/* ---- Fill (icon only — the label bar background is untouched) ---- */
+/* If your Zen version renders the folder icon differently, use the
+   Browser Toolbox (Ctrl+Shift+Alt+I) to inspect a folder and adjust
+   these selectors to match. */
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg path,
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg rect,
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg polygon {
   fill: var(--zen-folder-color) !important;
-}
-
-zen-folder[zen-custom-colored="true"] .tab-group-label-container {
-  background-color: color-mix(in srgb, var(--zen-folder-color, transparent) 18%, transparent) !important;
-  border-radius: 6px;
-}
-
-zen-folder[zen-custom-colored="true"] .tab-group-label-container:hover {
-  background-color: color-mix(in srgb, var(--zen-folder-color, transparent) 28%, transparent) !important;
 }
 
 /* ---- Outline (folder icon stroke) ---- */

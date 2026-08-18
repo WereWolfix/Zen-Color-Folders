@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name           Zen Folder Color Picker
 // @description    Adds a "Change Color…" item to the sidebar folder context menu with separate
-//                  color wheels for fill and outline, plus an outline thickness slider.
+//                  color wheels for icon fill, icon outline, and label text, plus an outline
+//                  thickness control. Never-customized folders open pre-filled with Zen's own
+//                  current colors for that folder.
 // @include        main
 // ==/UserScript==
 
 (function () {
   "use strict";
 
-  const PREF_KEY = "extensions.zenfoldercolor.colors"; // JSON: { [folderId]: {fill, outline, width} }
+  const PREF_KEY = "extensions.zenfoldercolor.colors"; // JSON: { [folderId]: {fill, outline, text, width} }
   const MENU_ITEM_ID = "zen-folder-change-color-item";
   const MENU_SEP_ID = "zen-folder-change-color-sep";
   const PANEL_ID = "zen-folder-color-picker-panel";
@@ -38,14 +40,15 @@
     Services.prefs.setStringPref(PREF_KEY, JSON.stringify(map));
   }
 
-  // Normalizes an entry, migrating the old "just a hex string" format
-  // (fill-only, no outline) to the new object format.
+  // Normalizes an entry, migrating older formats to the current shape:
+  // { fill, outline, text, width }
   function normalizeEntry(entry) {
-    if (!entry) return { fill: null, outline: null, width: 2 };
-    if (typeof entry === "string") return { fill: entry, outline: null, width: 2 };
+    if (!entry) return { fill: null, outline: null, text: null, width: 2 };
+    if (typeof entry === "string") return { fill: entry, outline: null, text: null, width: 2 };
     return {
       fill: entry.fill || null,
       outline: entry.outline || null,
+      text: entry.text || null,
       width: typeof entry.width === "number" ? entry.width : 2,
     };
   }
@@ -96,29 +99,93 @@
     return { h, s: max === 0 ? 0 : d / max, v: max };
   }
 
-  function contrastText(hex) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.6 ? "#111111" : "#ffffff";
+  const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+  function rgbStringToHex(rgbStr) {
+    if (!rgbStr) return null;
+    const m = rgbStr.match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const parts = m[1].split(",").map((s) => parseFloat(s.trim()));
+    const [r, g, b] = parts;
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
 
-  const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+  // Reads a folder's *currently rendered* color for a given part, so a
+  // never-customized folder's picker opens pre-filled with what Zen is
+  // already showing (its native per-folder default) instead of a
+  // hardcoded guess.
+  function iconShapeEl(folder) {
+    return folder.querySelector(
+      ".tab-group-folder-icon svg path, .tab-group-folder-icon svg rect, .tab-group-folder-icon svg polygon"
+    );
+  }
+
+  function labelEl(folder) {
+    return folder.querySelector(".tab-group-label") || folder.querySelector(".tab-group-label-container");
+  }
+
+  function computedFillHex(folder, fallback) {
+    const el = iconShapeEl(folder);
+    if (!el) return fallback;
+    try {
+      return rgbStringToHex(getComputedStyle(el).fill) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function computedStrokeHex(folder, fallback) {
+    const el = iconShapeEl(folder);
+    if (!el) return fallback;
+    try {
+      return rgbStringToHex(getComputedStyle(el).stroke) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function computedStrokeWidth(folder, fallback) {
+    const el = iconShapeEl(folder);
+    if (!el) return fallback;
+    try {
+      const v = parseFloat(getComputedStyle(el).strokeWidth);
+      return Number.isNaN(v) ? fallback : v;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function computedTextHex(folder, fallback) {
+    const el = labelEl(folder);
+    if (!el) return fallback;
+    try {
+      return rgbStringToHex(getComputedStyle(el).color) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
 
   // ---------------------------------------------------------------------
   // Applying colors to folders
   // ---------------------------------------------------------------------
 
   function applyColor(folder, entry) {
-    const { fill, outline, width } = normalizeEntry(entry);
+    const { fill, outline, text, width } = normalizeEntry(entry);
 
     if (fill) {
+      // Our own variable — the bundled CSS uses it to tint only the
+      // folder icon's fill, not the label bar background.
       folder.style.setProperty("--zen-folder-color", fill);
-      folder.style.setProperty("--zen-folder-color-contrast", contrastText(fill));
     } else {
       folder.style.removeProperty("--zen-folder-color");
-      folder.style.removeProperty("--zen-folder-color-contrast");
+    }
+
+    if (text) {
+      folder.style.setProperty("--zen-folder-text-color", text);
+    } else {
+      folder.style.removeProperty("--zen-folder-text-color");
     }
 
     if (outline) {
@@ -134,7 +201,7 @@
       folder.style.removeProperty("--zen-folder-stroke-width");
     }
 
-    if (fill || outline) {
+    if (fill || outline || text) {
       folder.setAttribute("zen-custom-colored", "true");
     } else {
       folder.removeAttribute("zen-custom-colored");
@@ -165,8 +232,8 @@
     title.style.opacity = "0.75";
 
     const canvas = html("canvas");
-    canvas.width = 140;
-    canvas.height = 140;
+    canvas.width = 120;
+    canvas.height = 120;
     canvas.style.cursor = "crosshair";
     canvas.style.borderRadius = "50%";
     const ctx = canvas.getContext("2d");
@@ -176,7 +243,7 @@
     valueSlider.min = "0";
     valueSlider.max = "100";
     valueSlider.value = "100";
-    valueSlider.style.width = "140px";
+    valueSlider.style.width = "120px";
 
     const row = xul("hbox");
     row.style.gap = "6px";
@@ -294,12 +361,12 @@
   }
 
   // ---------------------------------------------------------------------
-  // Panel: fill wheel + outline wheel + thickness slider + buttons
+  // Panel: fill wheel + outline wheel + text wheel + thickness + buttons
   // ---------------------------------------------------------------------
 
-  let panel, fillWidget, outlineWidget;
+  let panel, fillWidget, outlineWidget, textWidget;
   let widthSlider, widthNumber, widthLabel;
-  let fillEnabledCheckbox, outlineEnabledCheckbox;
+  let fillEnabledCheckbox, outlineEnabledCheckbox, textEnabledCheckbox;
   let activeFolder = null;
 
   function buildPanel() {
@@ -314,17 +381,18 @@
     container.style.gap = "8px";
 
     const wheelsRow = xul("hbox");
-    wheelsRow.style.gap = "16px";
+    wheelsRow.style.gap = "14px";
 
     fillWidget = buildWheelWidget(wheelsRow, "Fill Color");
     outlineWidget = buildWheelWidget(wheelsRow, "Outline Color");
+    textWidget = buildWheelWidget(wheelsRow, "Text Color");
 
     container.append(wheelsRow);
 
-    // Enable toggles (fill + outline), side by side
+    // Enable toggles (fill + outline + text), side by side
     const togglesRow = xul("hbox");
     togglesRow.style.alignItems = "center";
-    togglesRow.style.gap = "16px";
+    togglesRow.style.gap = "14px";
     togglesRow.style.marginTop = "4px";
 
     fillEnabledCheckbox = xul("checkbox");
@@ -345,7 +413,15 @@
       widthNumber.disabled = !enabled;
     });
 
-    togglesRow.append(fillEnabledCheckbox, outlineEnabledCheckbox);
+    textEnabledCheckbox = xul("checkbox");
+    textEnabledCheckbox.setAttribute("label", "Enable text");
+    textEnabledCheckbox.addEventListener("command", () => {
+      const enabled = textEnabledCheckbox.checked;
+      textWidget.root.style.opacity = enabled ? "1" : "0.4";
+      textWidget.root.style.pointerEvents = enabled ? "auto" : "none";
+    });
+
+    togglesRow.append(fillEnabledCheckbox, outlineEnabledCheckbox, textEnabledCheckbox);
     container.append(togglesRow);
 
     // Thickness: slider (decimals, down to 0) + a typeable number field
@@ -368,7 +444,7 @@
     widthSlider.max = "8";
     widthSlider.step = "0.1";
     widthSlider.value = "2";
-    widthSlider.style.width = "230px";
+    widthSlider.style.width = "300px";
 
     widthNumber = html("input");
     widthNumber.type = "number";
@@ -431,15 +507,14 @@
 
   function commitColor() {
     if (!activeFolder) return;
-    const fillOn = fillEnabledCheckbox.checked;
-    const fill = fillOn ? fillWidget.getHex() : null;
-    const outlineOn = outlineEnabledCheckbox.checked;
-    const outline = outlineOn ? outlineWidget.getHex() : null;
+    const fill = fillEnabledCheckbox.checked ? fillWidget.getHex() : null;
+    const outline = outlineEnabledCheckbox.checked ? outlineWidget.getHex() : null;
+    const text = textEnabledCheckbox.checked ? textWidget.getHex() : null;
     const width = currentWidth();
 
     const id = ensureFolderId(activeFolder);
     const colors = loadColors();
-    colors[id] = { fill, outline, width };
+    colors[id] = { fill, outline, text, width };
     saveColors(colors);
     applyColor(activeFolder, colors[id]);
     panel.hidePopup();
@@ -460,22 +535,39 @@
     activeFolder = folder;
     const id = ensureFolderId(folder);
     const colors = loadColors();
-    const entry = normalizeEntry(colors[id]);
+    const stored = colors[id];
+    const hasStoredEntry = !!stored;
+    const entry = normalizeEntry(stored);
 
-    fillWidget.setHex(entry.fill || "#8a8fff");
-    outlineWidget.setHex(entry.outline || "#2a2f6d");
+    // For a folder that's never been customized, default every wheel to
+    // ON and pre-filled with whatever Zen is already rendering for it
+    // (its native default color) rather than an arbitrary guess. Once a
+    // folder HAS a stored entry, respect exactly what was saved —
+    // including any wheel the user deliberately turned off.
+    const fillHex = entry.fill || computedFillHex(folder, "#8a8fff");
+    const outlineHex = entry.outline || computedStrokeHex(folder, "#2a2f6d");
+    const textHex = entry.text || computedTextHex(folder, "#ffffff");
+    const width = hasStoredEntry ? entry.width : computedStrokeWidth(folder, 2);
 
-    const hasFill = !!entry.fill;
+    fillWidget.setHex(fillHex);
+    outlineWidget.setHex(outlineHex);
+    textWidget.setHex(textHex);
+
+    const hasFill = hasStoredEntry ? !!entry.fill : true;
     fillEnabledCheckbox.checked = hasFill;
     fillWidget.root.style.opacity = hasFill ? "1" : "0.4";
     fillWidget.root.style.pointerEvents = hasFill ? "auto" : "none";
 
-    const hasOutline = !!entry.outline;
+    const hasOutline = hasStoredEntry ? !!entry.outline : true;
     outlineEnabledCheckbox.checked = hasOutline;
     outlineWidget.root.style.opacity = hasOutline ? "1" : "0.4";
     outlineWidget.root.style.pointerEvents = hasOutline ? "auto" : "none";
 
-    const width = typeof entry.width === "number" ? entry.width : 2;
+    const hasText = hasStoredEntry ? !!entry.text : true;
+    textEnabledCheckbox.checked = hasText;
+    textWidget.root.style.opacity = hasText ? "1" : "0.4";
+    textWidget.root.style.pointerEvents = hasText ? "auto" : "none";
+
     widthSlider.value = String(Math.min(Math.max(width, 0), 8));
     widthNumber.value = String(width);
     widthSlider.disabled = !hasOutline;
