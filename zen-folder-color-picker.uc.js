@@ -246,17 +246,59 @@
   // Click-to-sample eyedropper
   // ---------------------------------------------------------------------
 
-  // Lets you click any pixel within the current browser window (its own
-  // UI plus any page content rendered inside it) and get its color back,
-  // with a live magnifier that follows your cursor — showing both an
-  // actual color swatch AND the hex code — before you click.
+  // Rasterizes the current browser window into an offscreen canvas.
+  // `drawWindow()` alone only captures same-process rendering — under
+  // Fission/site-isolation, actual web page content (e.g. a YouTube tab)
+  // runs in a separate content process and comes back blank from
+  // drawWindow called on the chrome window. To also capture that, this
+  // separately grabs a snapshot of the selected tab's content via
+  // `browser.drawSnapshot()` — the API built specifically for capturing
+  // out-of-process tab content (the same mechanism behind Firefox's own
+  // screenshot tooling) — and composites it on top of the chrome capture
+  // at the browser element's actual position, so the merged canvas has
+  // both the UI chrome AND the real page pixels.
+  async function captureWindowCanvas() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const canvas = html("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+
+    // Base layer: chrome UI (toolbars, sidebar, tab strip, etc.)
+    ctx.drawWindow(window, 0, 0, w, h, "rgb(255,255,255)");
+
+    // Overlay layer: the actual page content of the selected tab, which
+    // may be out-of-process and therefore invisible to drawWindow above.
+    try {
+      const browser = typeof gBrowser !== "undefined" ? gBrowser.selectedBrowser : null;
+      if (browser && typeof browser.drawSnapshot === "function") {
+        const rect = browser.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const scale = window.devicePixelRatio || 1;
+          const bitmap = await browser.drawSnapshot(0, 0, rect.width, rect.height, scale, "white");
+          ctx.drawImage(bitmap, rect.left, rect.top, rect.width, rect.height);
+          if (bitmap.close) bitmap.close();
+        }
+      }
+    } catch (e) {
+      // Snapshotting the page content is best-effort — if it fails for
+      // any reason, we still have the chrome-only capture from above.
+    }
+
+    return { canvas, ctx };
+  }
+
+  // Lets you click any pixel within the current browser window — its own
+  // UI AND any page content rendered inside it, including out-of-process
+  // tabs (see captureWindowCanvas above) — and get its color back, with a
+  // live magnifier that follows your cursor — showing both an actual
+  // color swatch AND the hex code — before you click.
   //
   // The standard Web `EyeDropper` API isn't exposed to chrome-privileged
-  // windows like browser.xhtml, so this uses `drawWindow()` — a method
-  // only available to privileged/chrome JS — to rasterize the current
-  // browser window into an offscreen canvas, overlays a transparent
-  // full-window click-catcher, and reads back the exact pixel color
-  // under wherever the cursor is.
+  // windows like browser.xhtml, so this composites its own screenshot
+  // (see above), overlays a transparent full-window click-catcher, and
+  // reads back the exact pixel color under wherever the cursor is.
   //
   // `onPreview(hexOrNull)` is called continuously as the cursor moves
   // (and with null on cancel) so the caller can live-update its own
@@ -268,16 +310,10 @@
   // it can't reach outside the browser process to your OS desktop or
   // other applications.
   function pickColorFromScreen(onPreview) {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
       let canvas, ctx;
       try {
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        canvas = html("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        ctx = canvas.getContext("2d");
-        ctx.drawWindow(window, 0, 0, w, h, "rgb(255,255,255)");
+        ({ canvas, ctx } = await captureWindowCanvas());
       } catch (e) {
         resolve(null);
         return;
