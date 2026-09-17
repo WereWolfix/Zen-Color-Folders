@@ -192,20 +192,30 @@
     const { fill, outline, text, width } = normalizeEntry(entry);
 
     if (fill) {
-      // --zen-primary-color is Zen's OWN native variable. Its built-in
-      // zen-folders.css derives the icon's background/fill via
-      // --zen-folder-behind-bgcolor: light-dark(color-mix(in srgb,
-      // var(--zen-primary-color) 60%, gray), color-mix(in srgb,
-      // var(--zen-primary-color) 60%, #c1c1c1)) — i.e. it blends the
-      // primary color with gray/light-gray depending on light/dark mode.
-      // Setting --zen-primary-color (instead of forcing `fill:` directly,
-      // like an earlier version of this mod did) lets that native
-      // formula run as normal, so the icon keeps the same light/dark
-      // blended variation Zen already gives every folder — just with a
-      // custom base color instead of one of the presets.
+      // --zen-primary-color is Zen's OWN native variable, which its
+      // built-in CSS has (at least previously) derived the icon's
+      // background/fill from via something like:
+      //   --zen-folder-behind-bgcolor: light-dark(
+      //     color-mix(in srgb, var(--zen-primary-color) 60%, gray),
+      //     color-mix(in srgb, var(--zen-primary-color) 60%, #c1c1c1)
+      //   )
+      // Setting --zen-primary-color (instead of forcing `fill:` directly)
+      // lets that native formula run as normal when it's in effect, so
+      // the icon keeps the same light/dark blended variation Zen gives
+      // every folder — just with a custom base color instead of a
+      // preset. We still set it here in case it's in effect.
       folder.style.setProperty("--zen-primary-color", fill);
+      // Compatibility fallback: Zen updates have changed how the fill is
+      // derived before, and when that happens --zen-primary-color alone
+      // stops having any visible effect. So we ALSO set our own
+      // variable and force it directly onto the icon's fill via the
+      // bundled CSS as a guaranteed-to-work backstop — it loses the
+      // nice native light/dark blending, but it means fill keeps working
+      // even if Zen's internal formula changes shape again.
+      folder.style.setProperty("--zen-folder-color", fill);
     } else {
       folder.style.removeProperty("--zen-primary-color");
+      folder.style.removeProperty("--zen-folder-color");
     }
 
     if (text) {
@@ -232,6 +242,17 @@
       folder.setAttribute("zen-custom-colored", "true");
     } else {
       folder.removeAttribute("zen-custom-colored");
+    }
+
+    // Separate, fill-specific attribute — needed because the fill
+    // fallback CSS rule has to be scoped to "fill is actually enabled",
+    // not just "any of the three is enabled" (zen-custom-colored above),
+    // otherwise it would force-reset the icon's fill even on folders
+    // where only outline/text were customized.
+    if (fill) {
+      folder.setAttribute("zen-fill-colored", "true");
+    } else {
+      folder.removeAttribute("zen-fill-colored");
     }
   }
 

@@ -1,24 +1,31 @@
 /* Applies the custom colors chosen via the color wheels to a folder's
-   icon outline (stroke) and label text. Icon FILL is intentionally NOT
-   handled here — see note below.
+   icon fill, icon outline (stroke), and label text.
 
    The script sets these custom properties inline on the <zen-folder>
    element when applicable:
      --zen-primary-color       Zen's OWN native variable. Its built-in
-                                zen-folders.css already derives the
-                                icon's background/fill from this via
-                                something like:
+                                zen-folders.css has (at least previously)
+                                derived the icon's background/fill from
+                                this via something like:
                                   --zen-folder-behind-bgcolor: light-dark(
                                     color-mix(in srgb, var(--zen-primary-color) 60%, gray),
                                     color-mix(in srgb, var(--zen-primary-color) 60%, #c1c1c1)
                                   );
-                                Setting --zen-primary-color is enough —
-                                Zen's own formula keeps blending it with
-                                gray/light-gray for light vs dark mode,
-                                exactly like it does for its own preset
-                                colors. We deliberately do NOT add a
-                                `fill: ...` override rule, since that
-                                would flatten out that blending.
+                                We still set this in case that's in
+                                effect, since when it is, it gives a
+                                nicer light/dark-blended result than a
+                                flat override. No CSS rule of ours is
+                                needed for this half.
+     --zen-folder-color        our own variable — a guaranteed-to-work
+                                fallback for fill. Zen has changed how
+                                it derives the icon's fill color before,
+                                which silently breaks the
+                                --zen-primary-color path above with no
+                                way for the script to detect it. So the
+                                rule below forces the icon's fill to this
+                                directly (flat, no blending) as a
+                                backstop that keeps working regardless of
+                                what Zen's own formula currently does.
      --zen-folder-text-color   our own variable, label text color,
                                 independent of the fill color
      --zen-folder-stroke       Zen's OWN native variable — its
@@ -39,13 +46,25 @@ zen-folder[zen-custom-colored="true"] .tab-group-label {
   color: var(--zen-folder-text-color, inherit) !important;
 }
 
+/* ---- Fill (backstop only — see --zen-folder-color note above) ---- */
+/* Scoped to its OWN attribute (zen-fill-colored), separate from the
+   shared zen-custom-colored one used by text/outline below — otherwise
+   this rule would force-reset the icon's fill even on folders where
+   only outline/text were customized, not fill. If your Zen version
+   renders the folder icon differently, use the Browser Toolbox
+   (Ctrl+Shift+Alt+I) to inspect a folder and adjust these selectors to
+   match. */
+
+zen-folder[zen-fill-colored="true"] .tab-group-folder-icon svg path,
+zen-folder[zen-fill-colored="true"] .tab-group-folder-icon svg rect,
+zen-folder[zen-fill-colored="true"] .tab-group-folder-icon svg polygon {
+  fill: var(--zen-folder-color) !important;
+}
+
 /* ---- Outline (folder icon stroke) ---- */
 /* Color comes from --zen-folder-stroke, which Zen already wires up itself
    once it's set — no rule needed here for that part. We only need to
-   supply the thickness, since there's no native width variable. If your
-   Zen version renders the folder icon differently, use the Browser
-   Toolbox (Ctrl+Shift+Alt+I) to inspect a folder and adjust this
-   selector to match. */
+   supply the thickness, since there's no native width variable. */
 
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg path,
 zen-folder[zen-custom-colored="true"] .tab-group-folder-icon svg rect,
