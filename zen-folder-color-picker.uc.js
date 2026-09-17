@@ -145,6 +145,24 @@
     return `#${toHex(arr[0])}${toHex(arr[1])}${toHex(arr[2])}`;
   }
 
+  function hexToRgbArr(hex) {
+    if (!HEX_RE.test(hex)) return null;
+    return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+  }
+
+  // Approximates CSS color-mix(in srgb, <hex> percent%, <otherRgbArr>) —
+  // a plain per-channel linear blend, which is what color-mix does for
+  // the srgb color space. Used to derive the folder icon's lighter
+  // "back" shade from the chosen fill color, mirroring the two-tone
+  // front/back look Zen's own folder icons have (see applyColor).
+  function mixHex(hex, percent, otherRgbArr) {
+    const rgb = hexToRgbArr(hex);
+    if (!rgb) return hex;
+    const p = percent / 100;
+    const mixed = rgb.map((v, i) => v * p + otherRgbArr[i] * (1 - p));
+    return rgbArrToHex(mixed);
+  }
+
   function computedStrokeHex(folder, fallback) {
     const el = iconShapeEl(folder);
     if (el) {
@@ -207,15 +225,23 @@
       folder.style.setProperty("--zen-primary-color", fill);
       // Compatibility fallback: Zen updates have changed how the fill is
       // derived before, and when that happens --zen-primary-color alone
-      // stops having any visible effect. So we ALSO set our own
-      // variable and force it directly onto the icon's fill via the
-      // bundled CSS as a guaranteed-to-work backstop — it loses the
-      // nice native light/dark blending, but it means fill keeps working
-      // even if Zen's internal formula changes shape again.
-      folder.style.setProperty("--zen-folder-color", fill);
+      // stops having any visible effect. So we ALSO compute and set our
+      // own variables and force them directly onto the icon's two shapes
+      // via the bundled CSS, as a guaranteed-to-work backstop.
+      //
+      // The folder icon is two-tone: a darker front flap and a lighter
+      // "behind" sliver, matching the same relationship Zen's own
+      // --zen-folder-behind-bgcolor formula has to --zen-primary-color
+      // (front = the base color; back = that base blended toward gray).
+      // So the front shape gets your exact chosen color, and the back
+      // shape gets that same color blended 60% with gray, mirroring the
+      // native look instead of flattening both shapes to one flat tone.
+      folder.style.setProperty("--zen-folder-color-front", fill);
+      folder.style.setProperty("--zen-folder-color-back", mixHex(fill, 60, [128, 128, 128]));
     } else {
       folder.style.removeProperty("--zen-primary-color");
-      folder.style.removeProperty("--zen-folder-color");
+      folder.style.removeProperty("--zen-folder-color-front");
+      folder.style.removeProperty("--zen-folder-color-back");
     }
 
     if (text) {
