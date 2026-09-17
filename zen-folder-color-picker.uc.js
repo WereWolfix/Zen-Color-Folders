@@ -237,7 +237,7 @@
       // shape gets that same color blended 60% with gray, mirroring the
       // native look instead of flattening both shapes to one flat tone.
       folder.style.setProperty("--zen-folder-color-front", fill);
-      folder.style.setProperty("--zen-folder-color-back", mixHex(fill, 60, [128, 128, 128]));
+      folder.style.setProperty("--zen-folder-color-back", mixHex(fill, 35, [128, 128, 128]));
     } else {
       folder.style.removeProperty("--zen-primary-color");
       folder.style.removeProperty("--zen-folder-color-front");
